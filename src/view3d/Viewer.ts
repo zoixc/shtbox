@@ -274,9 +274,39 @@ export class Viewer {
   }
 
   // ---------- выбор и подсветка ----------
+  /** Выбор мышью: камеру не трогаем (пользователь и так смотрит на узел). */
+  private userPicked: string | null = null;
+  private scenePick(zone: string | null): void {
+    this.userPicked = zone;
+    this.events.pick(zone);
+  }
+
+  /** Плавно подводит камеру к узлу, выбранному из списка. */
+  focusZone(zone: string): void {
+    const rig = this.rig;
+    const a = rig?.anchors.get(zone);
+    if (!rig || !a) return;
+    const target = a.getWorldPosition(new Vector3());
+    const cur = this.camera.position.clone().sub(this.controls.target);
+    let dir = cur.clone().normalize();
+    const f = rig.facing.get(zone);
+    if (f && this.layer === 'body') {
+      const fv = new Vector3(f[0], 0, f[2]).normalize();
+      if (dir.dot(fv) < 0.45) dir = fv.multiplyScalar(0.9).add(new Vector3(0, 0.35, 0)).normalize();
+    }
+    const R = rig.bounds.radius;
+    const dist = Math.min(cur.length(), this.def?.zones.find((z) => z.id === zone)?.paintable ? R * 0.95 : R * 1.3);
+    const toP = target.clone().add(dir.multiplyScalar(dist));
+    this.camAnim = { t: 0, dur: 0.6, fromP: this.camera.position.clone(), toP, fromT: this.controls.target.clone(), toT: target };
+    this.invalidate();
+  }
+
   setSelected(zone: string | null): void {
     if (zone === this.selected) return;
+    const external = zone !== null && zone !== this.userPicked;
+    this.userPicked = null;
     this.selected = zone;
+    if (external && zone) this.focusZone(zone);
     this.applyHighlights();
     this.refreshBadges();
     this.invalidate();
@@ -343,7 +373,7 @@ export class Viewer {
       }
       return;
     }
-    this.events.pick(hit ? hit.zone : null);
+    this.scenePick(hit ? hit.zone : null);
   };
   private onDbl = (e: MouseEvent) => {
     const hit = this.pick(e.clientX, e.clientY);
@@ -573,7 +603,7 @@ export class Viewer {
         el.type = 'button';
         el.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          this.events.pick(zone);
+          this.scenePick(zone);
         });
         this.overlay.appendChild(el);
         this.badgeEls.set(zone, el);
