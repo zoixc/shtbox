@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
-import { formatDate } from '../core/dates';
+import { formatDate, todayStr } from '../core/dates';
+import { buildIcs } from '../core/ics';
 import { stateRank } from '../core/maintenance';
+import { expenseStats } from '../core/stats';
 import { LOG_KIND_LABEL } from '../core/types';
 import type { LogKind } from '../core/types';
 import { activeModel, guard, selectZone, store, toast } from '../state';
@@ -65,6 +67,12 @@ export function TasksTab() {
     if (r) return r;
     return (da?.leftKm ?? 1e9) - (db?.leftKm ?? 1e9);
   });
+  const car = store.activeCar.value;
+  const exportIcs = () => {
+    const ics = car ? buildIcs(car, tasks, todayStr()) : '';
+    if (!ics) return toast('Нет работ со сроком по времени — выгружать нечего.', 'err');
+    download(`maintenance-${car!.name.replace(/[^\w-]+/g, '_')}.ics`, ics, 'text/calendar;charset=utf-8');
+  };
   const missing = model.defaultMaintenance.filter((t) => !tasks.some((x) => x.title === t.title && x.zoneId === t.zoneId));
   return (
     <div>
@@ -81,6 +89,7 @@ export function TasksTab() {
             Типовой регламент ({missing.length})
           </button>
         )}
+        <button class="btn" onClick={exportIcs} disabled={!tasks.length} title="Даты ТО в календарь (.ics) с напоминанием за 7 дней">Календарь</button>
       </div>
       {adding && <TaskForm zoneId="general" onDone={() => setAdding(false)} />}
       {sorted.length ? sorted.map((t) => <TaskItem task={t} key={t.id} showZone />) : <Empty>Регламент пока пуст. Добавьте типовой набор работ или создайте свои.</Empty>}
@@ -111,6 +120,7 @@ export function LogTab() {
   const list = all.filter((l) => (!kind || l.kind === kind) && (!needle || `${l.title} ${l.notes} ${zoneLabel(l.zoneId)}`.toLowerCase().includes(needle)));
   const total = list.reduce((s, l) => s + (l.cost ?? 0), 0);
   const car = store.activeCar.value;
+  const stats = expenseStats(all);
 
   const exportCsv = () => {
     const rows = [['Дата', 'Пробег', 'Тип', 'Узел', 'Работа', 'Стоимость', 'Заметки'].map(csvCell).join(';')];
@@ -134,6 +144,7 @@ export function LogTab() {
           ))}
         </select>
       </div>
+      {stats.total > 0 && <ExpenseStatsView stats={stats} />}
       <div class="totals">
         <span>Записей: <b>{list.length}</b></span>
         <span>Потрачено: <b>{fmtMoney(total)}</b></span>
@@ -145,3 +156,22 @@ export function LogTab() {
 }
 
 export { Section };
+
+function ExpenseStatsView({ stats }: { stats: ReturnType<typeof expenseStats> }) {
+  const max = Math.max(...stats.byKind.map((k) => k.sum), 1);
+  return (
+    <div class="expenses">
+      <div class="totals">
+        {stats.byYear.map((y) => <span key={y.year}>{y.year}: <b>{fmtMoney(y.sum)}</b></span>)}
+        {stats.perKm !== undefined && <span>≈ <b>{stats.perKm.toFixed(1)} ₽/км</b></span>}
+      </div>
+      {stats.byKind.map((k) => (
+        <div class="bar-row" key={k.kind}>
+          <span class="bar-label">{LOG_KIND_LABEL[k.kind]}</span>
+          <span class="bar"><i class={`bar-${k.kind}`} ref={(el) => el?.style.setProperty('width', `${Math.max(3, (k.sum / max) * 100)}%`)} /></span>
+          <span class="bar-val">{fmtMoney(k.sum)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
