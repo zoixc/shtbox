@@ -95,3 +95,20 @@ jobs:
           curl -fsSI localhost:18080/sw.js | grep -i "cache-control: no-cache"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18080/)" = 403
           docker logs shtbox-ci
+      - name: Compose smoke test (web + sync profile, .env variables)
+        env:
+          SHTBOX_PORT: '18081'
+          SYNC_INVITE: 'ci-invite'
+        run: |
+          fail() { echo "::error::$*"; exit 1; }
+          docker rm -f shtbox-ci >/dev/null
+          out=$(docker compose --profile sync up -d --build --wait --wait-timeout 120 2>&1) || fail "compose up: $(echo "$out" | tail -15 | tr '\n' '|')"
+          curl -fsS localhost:18081/healthz
+          id=$(printf 'a%.0s' $(seq 32)); tok=$(printf 'b%.0s' $(seq 40)); url=localhost:18081/sync/v1/$id
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          test "$(code -X PUT $url -H "Authorization: Bearer $tok" -H 'If-None-Match: *' --data-binary secret)" = 403 || fail "sync: invite is not enforced"
+          test "$(code -X PUT $url -H "Authorization: Bearer $tok" -H 'If-None-Match: *' -H 'X-Invite: ci-invite' --data-binary secret)" = 201 || fail "sync: PUT through nginx failed"
+          test "$(curl -s $url -H "Authorization: Bearer $tok")" = secret || fail "sync: GET returned wrong body"
+          test "$(code $url -H "Authorization: Bearer $(printf 'c%.0s' $(seq 40))")" = 401 || fail "sync: foreign token accepted"
+          test "$(code -X DELETE $url -H "Authorization: Bearer $tok")" = 204 || fail "sync: DELETE failed"
+          docker compose --profile sync down -v
