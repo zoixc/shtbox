@@ -71,8 +71,18 @@ export async function checkReminders(store: Store, force = false): Promise<numbe
   const reg = await registration();
   for (const e of fresh) {
     const n = notificationFor(e);
-    if (reg) await reg.showNotification(n.title, { body: n.body, tag: n.tag, icon: '/icon.svg' });
-    else new Notification(n.title, { body: n.body, tag: n.tag, icon: '/icon.svg' });
+    const o = { body: n.body, tag: n.tag, icon: '/icon.svg' };
+    try {
+      if (reg) await reg.showNotification(n.title, o);
+      else new Notification(n.title, o);
+    } catch {
+      try {
+        new Notification(n.title, o);
+      } catch {
+        /* браузер не дал показать — не помечаем как показанное */
+        delete next[e.carId];
+      }
+    }
   }
   await store.setMeta(NOTIFIED_KEY, next);
   return fresh.length;
