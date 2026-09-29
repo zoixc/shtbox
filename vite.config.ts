@@ -27,8 +27,9 @@ function csp(): Plugin {
 
 export default defineConfig({
   plugins: [preact(), csp()],
-  server: { host: '0.0.0.0', allowedHosts: true },
-  preview: { host: '0.0.0.0', allowedHosts: true },
+  // /sync → локальный сервер синхронизации (server/sync-server.mjs), как это делает nginx в Docker
+  server: { host: '0.0.0.0', allowedHosts: true, proxy: { '/sync': 'http://127.0.0.1:8081' } },
+  preview: { host: '0.0.0.0', allowedHosts: true, proxy: { '/sync': 'http://127.0.0.1:8081' } },
   build: { target: 'es2022', chunkSizeWarningLimit: 700 },
   test: { environment: 'node', include: ['tests/**/*.test.ts'] },
 });

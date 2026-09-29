@@ -9,3 +9,4 @@ docs
 Dockerfile
 docker-compose.yml
 .dockerignore
+server

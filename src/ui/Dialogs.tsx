@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { Backup } from '../core/types';
-import { ValidationError, parseBackupText } from '../core/validation';
 import { getModel, listModels } from '../models/registry';
-import { guard, store, toast, ui } from '../state';
-import { download, parseNum } from '../util';
+import { guard, store, ui } from '../state';
+import { parseNum } from '../util';
 import { ConfirmButton, Field } from './common';
 
-function Modal(props: { title: string; onClose?: () => void; children: ComponentChildren; wide?: boolean }) {
+export function Modal(props: { title: string; onClose?: () => void; children: ComponentChildren; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -133,79 +131,6 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
           )}
         </div>
       </form>
-    </Modal>
-  );
-}
-
-export function BackupDialog() {
-  const close = () => (ui.dialog.value = null);
-  const [pending, setPending] = useState<Backup | null>(null);
-  const [err, setErr] = useState('');
-  const [mode, setMode] = useState<'merge' | 'replace'>('merge');
-  const file = useRef<HTMLInputElement>(null);
-
-  const [withPhotos, setWithPhotos] = useState(true);
-  const exportAll = async () => {
-    const b = await guard(store.exportSnapshot(withPhotos));
-    if (!b) return;
-    download(`shtbox-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(b, null, 2), 'application/json');
-  };
-  const onFile = async (e: Event) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    if (!f) return;
-    setErr('');
-    setPending(null);
-    try {
-      if (f.size > 120 * 1024 * 1024) throw new ValidationError('Файл слишком большой');
-      setPending(parseBackupText(await f.text()));
-    } catch (ex) {
-      setErr(ex instanceof ValidationError ? ex.message : 'Не удалось прочитать файл');
-    }
-    if (file.current) file.current.value = '';
-  };
-  return (
-    <Modal title="Резервная копия" onClose={close}>
-      <div class="form">
-        <p class="hint">Данные хранятся только в этом браузере (IndexedDB). Делайте копии — файл можно перенести на другое устройство.</p>
-        {!store.persistent && <p class="form-error">IndexedDB недоступна: данные пропадут после закрытия вкладки. Скачайте копию!</p>}
-        <div class="form-actions">
-          <button class="btn btn-primary" onClick={exportAll}>Скачать JSON</button>
-          <label class="check">
-            <input type="checkbox" checked={withPhotos} onChange={(e) => setWithPhotos((e.target as HTMLInputElement).checked)} /> с фотографиями ({store.attachments.value.length})
-          </label>
-          <button class="btn" onClick={() => file.current?.click()}>Загрузить из файла…</button>
-          <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} />
-        </div>
-        {err && <p class="form-error">{err}</p>}
-        {pending && (
-          <div class="card">
-            <p>
-              В файле: автомобилей — <b>{pending.cars.length}</b>, записей — <b>{pending.issues.length}</b>, регламент — <b>{pending.tasks.length}</b>, журнал — <b>{pending.logs.length}</b>, фото — <b>{pending.attachments?.length ?? 0}</b>.
-            </p>
-            <label class="check">
-              <input type="radio" name="mode" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Объединить с текущими данными
-            </label>
-            <label class="check">
-              <input type="radio" name="mode" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Заменить все текущие данные
-            </label>
-            <div class="form-actions">
-              <button
-                class="btn btn-primary"
-                onClick={async () => {
-                  const ok = await guard(store.importBackup(pending, mode).then(() => true));
-                  if (ok) {
-                    toast('Данные загружены');
-                    close();
-                  }
-                }}
-              >
-                Импортировать
-              </button>
-              <button class="btn btn-ghost" onClick={() => setPending(null)}>Отмена</button>
-            </div>
-          </div>
-        )}
-      </div>
     </Modal>
   );
 }
