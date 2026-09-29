@@ -53,6 +53,7 @@ export function ViewerPane() {
         cleanups.push(
           effect(() => {
             const car = store.activeCar.value;
+            void ui.modelsRev.value;
             if (!car) return;
             if (car.id !== lastCar) {
               lastCar = car.id;

@@ -3,9 +3,9 @@
  * поэтому, например, «закрыть дефект + записать в журнал» атомарно.
  * Есть in-memory реализация (для тестов и на случай, когда IndexedDB недоступна).
  */
-export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs', 'meta'] as const;
+export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs', 'meta', 'models', 'modelfiles'] as const;
 /** Хранилища, которые НЕ очищаются при «заменить все данные» при импорте (настройки приложения). */
-const KEEP_ON_CLEAR: readonly string[] = ['meta'];
+const KEEP_ON_CLEAR: readonly string[] = ['meta', 'models', 'modelfiles'];
 export type StoreName = (typeof STORES)[number];
 
 export type Op = { store: StoreName; put: { id: string } } | { store: StoreName; del: string };
@@ -19,7 +19,7 @@ export interface Storage {
 }
 
 const DB_NAME = 'shtbox';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const wrap = <T>(req: IDBRequest<T>) =>
   new Promise<T>((res, rej) => {
@@ -46,7 +46,7 @@ export class IdbStorage implements Storage {
         for (const s of STORES) {
           if (!db.objectStoreNames.contains(s)) {
             const os = db.createObjectStore(s, { keyPath: 'id' });
-            if (s !== 'cars' && s !== 'meta') os.createIndex('carId', 'carId');
+            if (s !== 'cars' && !KEEP_ON_CLEAR.includes(s)) os.createIndex('carId', 'carId');
           }
         }
       };

@@ -3,13 +3,15 @@ import { Store } from './core/store';
 import { openStorage } from './core/db';
 import type { IssueKind, Spot } from './core/types';
 import type { Layer } from './models/types';
-import { getModel } from './models/registry';
+import { getModel, hasModel } from './models/registry';
+import { isUserModel, loadUserModels } from './models/user';
 
 export let store: Store;
 
 export async function initStore(): Promise<Store> {
   store = new Store(await openStorage());
   await store.init();
+  await loadUserModels(store.backend);
   // статусы ТО зависят от «сегодня»
   setInterval(() => store.refreshToday(), 60_000);
   document.addEventListener('visibilitychange', () => store.refreshToday());
@@ -39,7 +41,15 @@ export const ui = {
   placing: signal(false),
   /** радиус метки на кузове, м */
   radius: signal(0.08),
-  dialog: signal<null | 'car-new' | 'car-edit' | 'backup' | 'help'>(null),
+  dialog: signal<null | 'car-new' | 'car-edit' | 'backup' | 'help' | 'models' | 'import'>(null),
+  /** после мастера импорта вернуться в диалог «Новый автомобиль» и выбрать эту модель */
+  /** id модели, разметку которой редактируем в мастере (иначе — новый импорт) */
+  editModel: signal<string | null>(null),
+  /** импорт файла вместо отсутствующей на устройстве модели (тот же id) */
+  replaceId: signal<string | null>(null),
+  /** растёт при изменении набора пользовательских моделей (перерисовка 3D и баннера) */
+  modelsRev: signal(0),
+  importReturn: signal<null | { modelId?: string }>(null),
   toast: signal<{ text: string; kind: 'ok' | 'err' } | null>(null),
   sheetOpen: signal(true),
   /** временный цвет кузова (предпросмотр в диалоге автомобиля) */
@@ -62,6 +72,12 @@ export async function guard<T>(p: Promise<T>): Promise<T | undefined> {
     toast(e instanceof Error ? e.message : 'Ошибка', 'err');
     return undefined;
   }
+}
+
+/** Модель пользователя есть в данных авто, но не загружена на этом устройстве (например, после синхронизации). */
+export function missingUserModel(): string | null {
+  const id = store?.activeCar.value?.modelId;
+  return id && isUserModel(id) && !hasModel(id) ? id : null;
 }
 
 /** Активная модель автомобиля (по modelId активной машины). */

@@ -1,13 +1,26 @@
+import type { VNode } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { ViewerPane } from './ViewerPane';
-import { guard, selectZone, store, ui } from './state';
+import { guard, missingUserModel, selectZone, store, ui } from './state';
 import type { SidebarTab } from './state';
 import { BackupDialog } from './ui/BackupDialog';
 import { CarDialog, HelpDialog, PhotoDialog } from './ui/Dialogs';
 import { Empty, Menu } from './ui/common';
+import { ModelsDialog } from './ui/ModelsDialog';
 import { IssuesTab, LogTab, TasksTab, ZoneList } from './ui/Tabs';
 import { ZonePanel } from './ui/ZonePanel';
 import { fmtKm, parseNum } from './util';
+
+/** Мастер импорта тянет three/meshoptimizer — грузим только по требованию. */
+function LazyWizard() {
+  const [C, setC] = useState<(() => VNode) | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    import('./ui/ImportWizard').then((m) => setC(() => m.default), () => setErr('Не удалось загрузить мастер (нет сети?)'));
+  }, []);
+  if (C) return <C />;
+  return <div class="wizard wizard-loading">{err || 'Загрузка мастера…'}{err && <button class="btn" onClick={() => (ui.dialog.value = 'models')}>Закрыть</button>}</div>;
+}
 
 function MileageEditor() {
   const car = store.activeCar.value!;
@@ -76,6 +89,7 @@ function Topbar() {
         items={[
           ...(car ? [{ label: 'Изменить автомобиль…', onSelect: () => (ui.dialog.value = 'car-edit') }] : []),
           { label: 'Добавить автомобиль…', onSelect: () => (ui.dialog.value = 'car-new') },
+          { label: 'Модели автомобилей…', onSelect: () => (ui.dialog.value = 'models') },
           { separator: true, label: '', onSelect: () => {} },
           { label: 'Данные, синхронизация, напоминания', onSelect: () => (ui.dialog.value = 'backup') },
           { separator: true, label: '', onSelect: () => {} },
@@ -126,16 +140,21 @@ export function App() {
   });
   const dialog = ui.dialog.value;
   const hasCar = !!store.activeCar.value;
+  void ui.modelsRev.value;
+  const missing = missingUserModel();
   return (
     <div class="app">
       <Topbar />
+      {missing && <div class="model-missing" role="alert">Модель этого автомобиля ещё не загружена на этом устройстве (модели хранятся локально). <button class="btn" onClick={() => ((ui.replaceId.value = missing), (ui.editModel.value = null), (ui.importReturn.value = null), (ui.dialog.value = 'import'))}>Загрузить файл</button></div>}
       <main class="main">
         <ViewerPane />
         {hasCar ? <Sidebar /> : <aside class="sidebar"><Empty>Добавьте первый автомобиль.</Empty></aside>}
       </main>
       {!hasCar && <CarDialog mode="new" forced />}
-      {hasCar && dialog === 'car-new' && <CarDialog mode="new" />}
+      {hasCar && (dialog === 'car-new' || (dialog === 'import' && ui.importReturn.value)) && <CarDialog mode="new" />}
       {hasCar && dialog === 'car-edit' && <CarDialog mode="edit" />}
+      {dialog === 'models' && <ModelsDialog />}
+      {dialog === 'import' && <LazyWizard />}
       {dialog === 'backup' && <BackupDialog />}
       {dialog === 'help' && <HelpDialog />}
       {ui.lightbox.value && <PhotoDialog id={ui.lightbox.value} />}

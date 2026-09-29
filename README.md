@@ -143,7 +143,7 @@ docker compose --profile sync up -d --build     # nginx проксирует /sy
 | Данные | IndexedDB, только локально; ничего не уходит в сеть |
 | Сборка | Vite; стартовый бандл ≈ 28 KB gzip, three и 3D — отдельные чанки |
 | Оффлайн | service worker (network-first), `navigator.storage.persist()` |
-| Безопасность | строгий CSP в prod (`script-src 'self'; style-src 'self'; connect-src 'self'`), нет `innerHTML`/eval, валидация импорта бэкапа, защита CSV от формульных инъекций |
+| Безопасность | строгий CSP в prod (`script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'`, WASM — только для сжатия моделей), нет `innerHTML`/eval, валидация импорта бэкапа, защита CSV от формульных инъекций |
 
 ## Архитектура
 

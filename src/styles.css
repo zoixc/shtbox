@@ -213,3 +213,36 @@ a.btn { text-decoration: none; color: var(--text); display: inline-flex; align-i
 .menu-item-on { color: var(--accent); }
 .menu-hint { font-size: 11px; color: var(--muted); }
 .menu-sep { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; width: 100%; }
+
+/* ---- мастер импорта моделей и список моделей ---- */
+.wizard { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: grid; grid-template-columns: minmax(0, 1fr) 440px; }
+.wizard-loading { place-items: center; display: grid; grid-template-columns: 1fr; color: var(--muted); }
+.wizard-view { position: relative; min-height: 0; background: radial-gradient(ellipse at 50% 35%, #232c38, #0f1216 75%); }
+.wizard-panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg2); border-left: 1px solid var(--line); }
+.wizard-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; }
+.wizard-head h2 { font-size: 17px; }
+.wizard-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.wizard-file { align-self: flex-start; cursor: pointer; }
+.wiz-bar { position: absolute; left: 12px; top: 12px; display: flex; gap: 8px; align-items: center; z-index: 3; }
+.wiz-bar input[type=color] { width: 36px; height: 32px; padding: 2px; }
+.btn-glass { background: rgba(15, 18, 22, .7); backdrop-filter: blur(6px); }
+.form-error { color: #ffb3b3; font-size: 13px; }
+.lines { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+.lines input[type=range] { padding: 0; }
+.parts { display: flex; flex-direction: column; gap: 4px; }
+.part { display: grid; grid-template-columns: minmax(0, 1fr) 138px 138px; gap: 6px; align-items: center; padding: 5px 6px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }
+.part:hover { background: var(--panel); }
+.part-on { border-color: #ff8a1f; background: var(--panel); }
+.part-hidden { opacity: .5; }
+.part-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.part select { font-size: 12px; padding: 4px 6px; }
+.model-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.model-list li { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.model-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.model-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.model-missing { background: #3a2a10; border-bottom: 1px solid var(--amber); padding: 8px 14px; display: flex; gap: 12px; align-items: center; font-size: 13px; }
+@media (max-width: 860px) {
+  .wizard { grid-template-columns: 1fr; grid-template-rows: 38vh minmax(0, 1fr); }
+  .wizard-panel { border-left: 0; border-top: 1px solid var(--line); }
+  .part { grid-template-columns: minmax(0, 1fr) 110px 110px; }
+}

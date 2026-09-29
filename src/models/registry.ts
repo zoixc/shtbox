@@ -1,7 +1,7 @@
 import type { CarModelDef, GltfModelDef } from './types';
 import { bmw116i, bmw116iLite } from './hatch/bmw116i';
 import { solaris } from './sedan/solaris';
-import { defineImportedModel } from './imported';
+import { defineImportedModel } from './imported/define';
 
 /**
  * Реестр моделей автомобилей. Чтобы добавить новую модель:
@@ -41,5 +41,17 @@ const porsche4s = defineImportedModel({
 
 const models: CarModelDef[] = [bmw116i, solaris, bmw116iLite, porsche4s, porsche930];
 
-export const listModels = (): readonly CarModelDef[] => models;
-export const getModel = (id: string): CarModelDef => models.find((m) => m.id === id) ?? models[0];
+/** Модели пользователя (из IndexedDB) — добавляются во время работы. */
+const extra: CarModelDef[] = [];
+export const registerModel = (def: CarModelDef): void => {
+  const i = extra.findIndex((m) => m.id === def.id);
+  if (i >= 0) extra[i] = def;
+  else extra.push(def);
+};
+export const unregisterModel = (id: string): void => {
+  const i = extra.findIndex((m) => m.id === id);
+  if (i >= 0) extra.splice(i, 1);
+};
+export const hasModel = (id: string): boolean => models.some((m) => m.id === id) || extra.some((m) => m.id === id);
+export const listModels = (): readonly CarModelDef[] => [...models, ...extra];
+export const getModel = (id: string): CarModelDef => extra.find((m) => m.id === id) ?? models.find((m) => m.id === id) ?? models[0];

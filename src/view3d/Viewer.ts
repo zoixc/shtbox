@@ -166,9 +166,9 @@ export class Viewer {
   private issuesCache: Issue[] = [];
   private draftCache: { zone: string; spot: Spot; kind: string } | null = null;
 
-  setModel(def: CarModelDef, color: string): void {
+  setModel(def: CarModelDef, color: string, opts: { keepView?: boolean } = {}): void {
     this.color = color;
-    if (this.def?.id === def.id) {
+    if (this.def === def) {
       this.rig?.setColor(color);
       this.invalidate();
       return;
@@ -192,7 +192,7 @@ export class Viewer {
       }
       this.applyLayer();
       this.applyHighlights();
-      this.view(this.layer === 'body' ? 'iso' : this.layer === 'interior' ? 'cabin-out' : 'mech', true);
+      if (!opts.keepView) this.view(this.layer === 'body' ? 'iso' : this.layer === 'interior' ? 'cabin-out' : 'mech', true);
       this.spotsInstant = true;
       this.setIssues(this.issuesCache);
       this.setDraft(this.draftCache);

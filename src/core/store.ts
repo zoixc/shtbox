@@ -133,6 +133,11 @@ export class Store {
     await this.storage.apply([{ store: 'meta', put: { id: key, value } as { id: string } }]);
   }
 
+  /** Низкоуровневое хранилище (для моделей пользователя). */
+  get backend(): Storage {
+    return this.storage;
+  }
+
   get persistent(): boolean {
     return this.storage.persistent;
   }

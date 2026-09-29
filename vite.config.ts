@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 function csp(): Plugin {
   const policy = [
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self'",

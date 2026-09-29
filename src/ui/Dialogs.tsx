@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { getModel, listModels } from '../models/registry';
+import { getModel, hasModel, listModels } from '../models/registry';
 import { guard, store, ui } from '../state';
 import { parseNum } from '../util';
 import { ConfirmButton, Field } from './common';
@@ -45,6 +45,19 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
   const [withTasks, setWithTasks] = useState(!editing);
   const close = () => (ui.dialog.value = null);
 
+  // возврат из мастера импорта: подставляем загруженную модель
+  const ret = ui.importReturn.value;
+  useEffect(() => {
+    if (editing || !ret || ui.dialog.value !== 'car-new') return;
+    if (ret.modelId && hasModel(ret.modelId)) {
+      const m = getModel(ret.modelId);
+      setModelId(m.id);
+      setColor(m.defaultColor);
+      setName(m.name);
+    }
+    ui.importReturn.value = null;
+  }, [ret, ui.dialog.value]);
+
   // живой предпросмотр цвета на модели
   useEffect(() => {
     ui.previewColor.value = color;
@@ -78,6 +91,13 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
             disabled={!!editing}
             onChange={(e) => {
               const id = (e.target as HTMLSelectElement).value;
+              if (id === '__import') {
+                (e.target as HTMLSelectElement).value = modelId;
+                ui.importReturn.value = {};
+                ui.editModel.value = null;
+                ui.dialog.value = 'import';
+                return;
+              }
               setModelId(id);
               setColor(getModel(id).defaultColor);
             }}
@@ -85,6 +105,7 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
             {models.map((m) => (
               <option value={m.id} key={m.id}>{m.name}</option>
             ))}
+            {!editing && <option value="__import">+ Загрузить свою модель (.glb)…</option>}
           </select>
         </Field>
         <Field label="Цвет кузова">
