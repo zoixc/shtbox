@@ -100,7 +100,7 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
     for (const m of meshes) {
       m.userData.zone = id;
       if (paintSet.has(m) && def.paintable) {
-        const pm = createPaintMaterial(paintColor);
+        const pm = createPaintMaterial(paintColor, 'satin');
         // сохраняем прозрачность/двусторонность исходного материала
         const src = m.material as Material;
         if (src && !Array.isArray(src)) pm.side = src.side;

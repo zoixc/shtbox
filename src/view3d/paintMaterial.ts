@@ -196,15 +196,19 @@ export function getFx(m: Material): PaintFx | undefined {
 }
 
 /** Материал краски с шейдерными повреждениями. */
-export function createPaintMaterial(color: number | string): MeshPhysicalMaterial {
-  const m = new MeshPhysicalMaterial({
-    color: new Color(color),
-    metalness: 0.35,
-    roughness: 0.34,
-    clearcoat: 0.9,
-    clearcoatRoughness: 0.08,
-    envMapIntensity: 1.0,
-  });
+export type PaintFinish = 'gloss' | 'satin';
+
+/**
+ * Параметры лака. «gloss» — для гладких процедурных панелей; «satin» — для моделей из файлов
+ * (сканы и чужие меши с шумными нормалями при сильной зеркальности выглядят «хромом»).
+ */
+const FINISH: Record<PaintFinish, { metalness: number; roughness: number; clearcoat: number; clearcoatRoughness: number; envMapIntensity: number }> = {
+  gloss: { metalness: 0.35, roughness: 0.34, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 1.0 },
+  satin: { metalness: 0.08, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.3, envMapIntensity: 0.55 },
+};
+
+export function createPaintMaterial(color: number | string, finish: PaintFinish = 'gloss'): MeshPhysicalMaterial {
+  const m = new MeshPhysicalMaterial({ color: new Color(color), ...FINISH[finish] });
   const fx = createFx();
   (m.userData as Record<string, unknown>)[FX_KEY] = fx;
   m.onBeforeCompile = (sh) => patch(sh, fx, globalTime, true);
