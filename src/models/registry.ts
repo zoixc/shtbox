@@ -25,7 +25,7 @@ const fetchPkg = (url: string) => async () => {
 const porsche930 = defineImportedModel({
   id: 'coupe-porsche-930',
   name: 'Porsche 911 Turbo (930, 1975)',
-  description: 'Купе с задним расположением двигателя. Кузов цельный — двери не открываются. Модель: Lexyc16, CC BY 4.0.',
+  description: 'Купе с задним расположением двигателя. Двери, капот и крышка двигателя вырезаны из цельного кузова (линии реза приблизительные). Модель: Lexyc16, CC BY 4.0.',
   shape: { body: 'coupe', layout: 'rear' },
   defaultColor: '#8a9099',
   load: fetchPkg('/models/porsche-930.glb'),
@@ -33,7 +33,7 @@ const porsche930 = defineImportedModel({
 const porsche4s = defineImportedModel({
   id: 'coupe-porsche-4s',
   name: 'Porsche 911 Carrera 4S',
-  description: 'Купе с задним расположением двигателя. Кузов цельный — двери не открываются. Модель: Karol Miklas, CC BY-SA 4.0.',
+  description: 'Купе с задним расположением двигателя. Двери, капот и крышка двигателя вырезаны из цельного кузова (линии реза приблизительные). Модель: Karol Miklas, CC BY-SA 4.0.',
   shape: { body: 'coupe', layout: 'rear' },
   defaultColor: '#a3161f',
   load: fetchPkg('/models/porsche-4s.glb'),

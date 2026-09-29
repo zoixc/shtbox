@@ -1,0 +1,12 @@
+Porsche 911 Carrera 4S — public/models/porsche-4s.glb
+
+Основана на модели «(FREE) Porsche 911 Carrera 4S» автора Karol Miklas
+https://sketchfab.com/karolmiklas
+https://sketchfab.com/3d-models/free-porsche-911-carrera-4s-d01b254483794de3819786d93e0e1ebf
+Лицензия: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+http://creativecommons.org/licenses/by-sa/4.0/
+
+Изменения: геометрия приведена к осям приложения (метры, +X вперёд), детали сгруппированы, упрощена (652 тыс. → 133 тыс.
+треугольников) и сопровождена разметкой shtbox (extras.shtbox). См. src/import, scripts/import-model.mjs.
+ShareAlike: этот производный файл распространяется на условиях той же лицензии CC BY-SA 4.0; на остальной код
+приложения условие не распространяется (модель — отдельный файл данных, подгружаемый при выборе).

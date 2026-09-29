@@ -6,12 +6,13 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { BufferGeometry, DoubleSide, Matrix4, Mesh, MeshBasicMaterial, Object3D, Quaternion, Raycaster, Vector2, Vector3 } from 'three';
 import type { Viewer } from '../view3d/Viewer';
 import { uid } from '../core/id';
-import { patchProfile } from '../import/container';
+import { patchProfile, splitGlb } from '../import/container';
 import { ImportSession } from '../import/client';
 import type { ImportOutcome } from '../import/client';
 import type { AnalyzeHint } from '../import/analyze';
 import type { BodyType, Kind, Lines, PartInfo, Profile } from '../import/types';
 import { KINDS } from '../import/types';
+import { parseProfile } from '../import/profile';
 import { zonesFor } from '../import/zoneset';
 import { createImportedRig, parsePackage } from '../models/imported';
 import { USER_PREFIX, readUserModelFile, saveUserModel, userModels } from '../models/user';
@@ -225,7 +226,24 @@ export default function ImportWizard() {
     try {
       const data = await file.arrayBuffer();
       const s = (sess.current = new ImportSession());
-      const title = file.name.replace(/\.glb$/i, '').slice(0, 80);
+      const title = file.name.replace(/\.(shtcar\.)?glb$/i, '').slice(0, 80);
+      // готовый пакет shtbox (экспорт из приложения / CLI): разметка уже есть — берём как есть
+      let ready: Profile | null = null;
+      try {
+        const raw = (splitGlb(new Uint8Array(data)).json.extras as { shtbox?: unknown } | undefined)?.shtbox;
+        if (raw) ready = parseProfile(raw);
+      } catch {
+        ready = null;
+      }
+      if (ready) {
+        await s.loadPackage(data.slice(0));
+        const p = await parsePackage(data.slice(0));
+        pkg.current = { glb: new Uint8Array(data), scene: p.scene };
+        setProfile(ready);
+        setName(ready.title || title);
+        setPhase('edit');
+        return;
+      }
       const r = await s.importFile(data, title, undefined, (stage, frac) => setProg({ stage, frac }));
       const p = await parsePackage(r.glb.buffer.slice(r.glb.byteOffset, r.glb.byteOffset + r.glb.byteLength) as ArrayBuffer);
       pkg.current = { glb: r.glb, scene: p.scene };

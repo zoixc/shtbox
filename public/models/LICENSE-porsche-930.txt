@@ -1,0 +1,10 @@
+Porsche 911 (930) Turbo 1975 — public/models/porsche-930.glb
+
+Основана на модели «Porsche 911 (930) Turbo 1975» автора Lexyc16
+https://sketchfab.com/Lexyc16
+https://sketchfab.com/3d-models/porsche-911-930-turbo-1975-de1ffd344c41481892511f7fd332c136
+Лицензия: Creative Commons Attribution 4.0 International (CC BY 4.0)
+http://creativecommons.org/licenses/by/4.0/
+
+Изменения: геометрия приведена к осям приложения (метры, +X вперёд), детали сгруппированы, упрощены и сопровождены
+разметкой shtbox (extras.shtbox). См. src/import, scripts/import-model.mjs.

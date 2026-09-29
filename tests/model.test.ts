@@ -43,9 +43,20 @@ async function loadFromDisk(url: string) {
   return gltf.scene;
 }
 
+/** fetch() для пакетов из public/ (в Node относительные URL не работают). */
+function stubFetch() {
+  (globalThis as Record<string, unknown>).self ??= globalThis;
+  (globalThis as Record<string, unknown>).createImageBitmap ??= async () => ({ width: 2, height: 2, close() {} });
+  (globalThis as Record<string, unknown>).fetch = async (u: string) => {
+    const b = await readFile(new URL(`../public${u}`, import.meta.url));
+    return { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
+  };
+}
+
 describe('model registry contract', () => {
   for (const def of listModels()) {
     it(`${def.id}: every zone has 3D geometry, paintable zones have paint meshes`, async () => {
+      stubFetch();
       const rig = def.id === 'hatch-bmw116i' ? await createBmw116i(def.defaultColor, loadFromDisk) : await def.create(def.defaultColor);
       const ids = new Set(def.zones.map((z) => z.id));
       expect(ids.size).toBe(def.zones.length); // уникальные id
