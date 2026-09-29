@@ -82,6 +82,32 @@ export interface LogEntry {
   createdAt: number;
 }
 
+/** Владелец вложения: фото/чек привязывается к записи. */
+export type AttachmentOwner = 'issue' | 'log' | 'task';
+export const ATTACHMENT_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export type AttachmentMime = (typeof ATTACHMENT_MIMES)[number];
+
+/** Метаданные вложения + миниатюра (полный файл лежит в отдельном хранилище `blobs`). */
+export interface Attachment {
+  id: ID;
+  carId: ID;
+  ownerType: AttachmentOwner;
+  ownerId: ID;
+  name: string;
+  mime: AttachmentMime;
+  size: number;
+  w: number;
+  h: number;
+  createdAt: number;
+  thumb: Blob;
+}
+
+/** Вложение в JSON-копии: файлы в base64. */
+export interface BackupAttachment extends Omit<Attachment, 'thumb'> {
+  data: string;
+  thumb: string;
+}
+
 export interface Backup {
   app: 'shtbox';
   version: 1;
@@ -90,6 +116,7 @@ export interface Backup {
   issues: Issue[];
   tasks: MaintenanceTask[];
   logs: LogEntry[];
+  attachments?: BackupAttachment[];
 }
 
 export const ISSUE_KIND_LABEL: Record<IssueKind, string> = {

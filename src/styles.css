@@ -202,3 +202,13 @@ textarea { resize: vertical; }
   .row3 > :first-child { grid-column: span 2; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.photos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+.photo { padding: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); cursor: zoom-in; line-height: 0; }
+.photo img { width: 56px; height: 56px; object-fit: cover; display: block; }
+.photo:hover { border-color: var(--accent); }
+.photo-add { font: inherit; font-size: 12px; color: var(--muted); background: transparent; border: 1px dashed var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.photo-add:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.photo-view { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.photo-view img { max-width: 100%; max-height: 62vh; border-radius: 8px; background: #000; }
+a.btn { text-decoration: none; color: var(--text); display: inline-flex; align-items: center; }

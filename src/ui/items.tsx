@@ -7,6 +7,7 @@ import { guard, selectZone, store, ui, zoneLabel } from '../state';
 import { fmtKm, fmtMoney } from '../util';
 import { Chip, ConfirmButton } from './common';
 import { CompleteForm, LogForm, TaskForm } from './forms';
+import { Photos } from './Photos';
 import type { Draft } from '../state';
 
 export function dueText(d: DueInfo | undefined): { text: string; tone: 'red' | 'amber' | 'green' | 'gray' } {
@@ -47,6 +48,7 @@ export function IssueItem(props: { issue: Issue; showZone?: boolean }) {
           {i.cost !== undefined && ` · ≈ ${fmtMoney(i.cost)}`}
           {i.spot && ' · отмечено на кузове'}
         </p>
+        <Photos type="issue" id={i.id} />
       </div>
       {completing ? (
         <CompleteForm
@@ -143,6 +145,8 @@ export function LogItem(props: { log: LogEntry; showZone?: boolean }) {
           {l.cost !== undefined && ` · ${fmtMoney(l.cost)}`}
         </p>
         {l.notes && <p class="item-notes">{l.notes}</p>}
+        {issue && <Photos type="issue" id={issue.id} addLabel="+ Фото до" />}
+        <Photos type="log" id={l.id} addLabel={issue ? '+ Фото после / чек' : '+ Чек / фото'} />
       </div>
       <div class="item-actions">
         <button class="btn btn-ghost" onClick={() => setEditing(true)}>Изменить</button>

@@ -3,7 +3,7 @@
  * поэтому, например, «закрыть дефект + записать в журнал» атомарно.
  * Есть in-memory реализация (для тестов и на случай, когда IndexedDB недоступна).
  */
-export const STORES = ['cars', 'issues', 'tasks', 'logs'] as const;
+export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs'] as const;
 export type StoreName = (typeof STORES)[number];
 
 export type Op = { store: StoreName; put: { id: string } } | { store: StoreName; del: string };
@@ -11,12 +11,13 @@ export type Op = { store: StoreName; put: { id: string } } | { store: StoreName;
 export interface Storage {
   readonly persistent: boolean;
   getAll<T>(store: StoreName): Promise<T[]>;
+  get<T>(store: StoreName, id: string): Promise<T | undefined>;
   apply(ops: Op[]): Promise<void>;
   clearAll(): Promise<void>;
 }
 
 const DB_NAME = 'shtbox';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const wrap = <T>(req: IDBRequest<T>) =>
   new Promise<T>((res, rej) => {
@@ -58,6 +59,11 @@ export class IdbStorage implements Storage {
     return wrap(tx.objectStore(store).getAll() as IDBRequest<T[]>);
   }
 
+  async get<T>(store: StoreName, id: string): Promise<T | undefined> {
+    const tx = this.db.transaction(store, 'readonly');
+    return wrap(tx.objectStore(store).get(id) as IDBRequest<T | undefined>);
+  }
+
   async apply(ops: Op[]): Promise<void> {
     if (!ops.length) return;
     const names = [...new Set(ops.map((o) => o.store))];
@@ -83,6 +89,10 @@ export class MemoryStorage implements Storage {
 
   async getAll<T>(store: StoreName): Promise<T[]> {
     return structuredClone([...this.data.get(store)!.values()]) as T[];
+  }
+  async get<T>(store: StoreName, id: string): Promise<T | undefined> {
+    const v = this.data.get(store)!.get(id);
+    return v === undefined ? undefined : (structuredClone(v) as T);
   }
   async apply(ops: Op[]): Promise<void> {
     for (const op of ops) {

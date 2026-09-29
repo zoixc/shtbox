@@ -44,6 +44,8 @@ export const ui = {
   sheetOpen: signal(true),
   /** временный цвет кузова (предпросмотр в диалоге автомобиля) */
   previewColor: signal<string | null>(null),
+  /** id вложения, открытого в просмотре */
+  lightbox: signal<string | null>(null),
 };
 
 let toastTimer = 0;

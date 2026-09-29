@@ -144,8 +144,10 @@ export function BackupDialog() {
   const [mode, setMode] = useState<'merge' | 'replace'>('merge');
   const file = useRef<HTMLInputElement>(null);
 
-  const exportAll = () => {
-    const b = store.exportBackup();
+  const [withPhotos, setWithPhotos] = useState(true);
+  const exportAll = async () => {
+    const b = await guard(store.exportSnapshot(withPhotos));
+    if (!b) return;
     download(`shtbox-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(b, null, 2), 'application/json');
   };
   const onFile = async (e: Event) => {
@@ -154,7 +156,7 @@ export function BackupDialog() {
     setErr('');
     setPending(null);
     try {
-      if (f.size > 50 * 1024 * 1024) throw new ValidationError('Файл слишком большой');
+      if (f.size > 120 * 1024 * 1024) throw new ValidationError('Файл слишком большой');
       setPending(parseBackupText(await f.text()));
     } catch (ex) {
       setErr(ex instanceof ValidationError ? ex.message : 'Не удалось прочитать файл');
@@ -168,6 +170,9 @@ export function BackupDialog() {
         {!store.persistent && <p class="form-error">IndexedDB недоступна: данные пропадут после закрытия вкладки. Скачайте копию!</p>}
         <div class="form-actions">
           <button class="btn btn-primary" onClick={exportAll}>Скачать JSON</button>
+          <label class="check">
+            <input type="checkbox" checked={withPhotos} onChange={(e) => setWithPhotos((e.target as HTMLInputElement).checked)} /> с фотографиями ({store.attachments.value.length})
+          </label>
           <button class="btn" onClick={() => file.current?.click()}>Загрузить из файла…</button>
           <input ref={file} type="file" accept="application/json,.json" hidden onChange={onFile} />
         </div>
@@ -175,7 +180,7 @@ export function BackupDialog() {
         {pending && (
           <div class="card">
             <p>
-              В файле: автомобилей — <b>{pending.cars.length}</b>, записей — <b>{pending.issues.length}</b>, регламент — <b>{pending.tasks.length}</b>, журнал — <b>{pending.logs.length}</b>.
+              В файле: автомобилей — <b>{pending.cars.length}</b>, записей — <b>{pending.issues.length}</b>, регламент — <b>{pending.tasks.length}</b>, журнал — <b>{pending.logs.length}</b>, фото — <b>{pending.attachments?.length ?? 0}</b>.
             </p>
             <label class="check">
               <input type="radio" name="mode" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Объединить с текущими данными
@@ -200,6 +205,41 @@ export function BackupDialog() {
             </div>
           </div>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+export function PhotoDialog(props: { id: string }) {
+  const att = store.attachments.value.find((a) => a.id === props.id);
+  const [url, setUrl] = useState<string | null>(null);
+  const [err, setErr] = useState('');
+  const close = () => (ui.lightbox.value = null);
+  useEffect(() => {
+    let made: string | null = null;
+    let dead = false;
+    store.getAttachmentBlob(props.id).then((b) => {
+      if (dead) return;
+      if (!b) return setErr('Файл не найден');
+      made = URL.createObjectURL(b);
+      setUrl(made);
+    }, () => setErr('Не удалось прочитать файл'));
+    return () => {
+      dead = true;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [props.id]);
+  if (!att) return null;
+  return (
+    <Modal title={att.name} onClose={close} wide>
+      <div class="photo-view">
+        {url ? <img src={url} alt={att.name} /> : <p class="hint">{err || 'Загрузка…'}</p>}
+        <p class="item-meta">{att.w}×{att.h} · {Math.round(att.size / 1024)} КБ · {new Date(att.createdAt).toLocaleDateString('ru-RU')}</p>
+        <div class="form-actions">
+          {url && <a class="btn" href={url} download={att.name}>Скачать</a>}
+          <ConfirmButton label="Удалить" onConfirm={() => void guard(store.deleteAttachment(att.id)).then(close)} />
+          <button class="btn btn-ghost" onClick={close}>Закрыть</button>
+        </div>
       </div>
     </Modal>
   );

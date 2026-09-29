@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { ViewerPane } from './ViewerPane';
 import { guard, selectZone, store, ui } from './state';
 import type { SidebarTab } from './state';
-import { BackupDialog, CarDialog, HelpDialog } from './ui/Dialogs';
+import { BackupDialog, CarDialog, HelpDialog, PhotoDialog } from './ui/Dialogs';
 import { Empty } from './ui/common';
 import { IssuesTab, LogTab, TasksTab, ZoneList } from './ui/Tabs';
 import { ZonePanel } from './ui/ZonePanel';
@@ -126,6 +126,7 @@ export function App() {
       {hasCar && dialog === 'car-edit' && <CarDialog mode="edit" />}
       {dialog === 'backup' && <BackupDialog />}
       {dialog === 'help' && <HelpDialog />}
+      {ui.lightbox.value && <PhotoDialog id={ui.lightbox.value} />}
       {store.error.value && <div class="toast toast-err" role="alert">{store.error.value}</div>}
       {ui.toast.value && <div class={`toast toast-${ui.toast.value.kind}`} role="status">{ui.toast.value.text}</div>}
     </div>

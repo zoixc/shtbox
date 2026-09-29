@@ -4,8 +4,9 @@
  * Неизвестные поля отбрасываются (белый список).
  */
 import { isDateStr } from './dates';
-import { BODY_KINDS } from './types';
-import type { Backup, Car, ID, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, Spot } from './types';
+import { b64ToBytes } from './b64';
+import { ATTACHMENT_MIMES, BODY_KINDS } from './types';
+import type { Attachment, AttachmentMime, AttachmentOwner, Backup, BackupAttachment, Car, ID, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, Spot } from './types';
 
 export class ValidationError extends Error {}
 
@@ -16,6 +17,8 @@ const ZONE_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 export const LIMITS = { name: 120, text: 4000, records: 50000, maxKm: 5_000_000, maxCost: 1e9 } as const;
+/** Вложения: на запись — не больше 12 файлов, файл — до 6 МБ (после сжатия обычно 200–600 КБ), миниатюра — до 200 КБ. */
+export const ATTACH_LIMITS = { perOwner: 12, fileBytes: 6 * 1024 * 1024, thumbBytes: 200 * 1024, maxCount: 3000, maxDim: 12000 } as const;
 
 type Obj = Record<string, unknown>;
 
@@ -159,6 +162,58 @@ export function sanitizeLog(v: unknown): LogEntry {
   };
 }
 
+/** Определяет тип по «магическим байтам» (расширению и заявленному mime не доверяем). */
+export function sniffMime(b: Uint8Array): AttachmentMime | undefined {
+  if (b.length > 12 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length > 12 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b.length > 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+  return undefined;
+}
+
+function attachmentMeta(o: Obj) {
+  const owner = o.ownerType as AttachmentOwner;
+  if (owner !== 'issue' && owner !== 'log' && owner !== 'task') throw new ValidationError('attachment.ownerType: неизвестный тип');
+  const mime = o.mime as AttachmentMime;
+  if (!ATTACHMENT_MIMES.includes(mime)) throw new ValidationError('attachment.mime: допустимы только JPEG/PNG/WebP');
+  const dim = (v: unknown) => num(v, 1, ATTACH_LIMITS.maxDim) ?? 0;
+  return {
+    id: id(o.id, 'attachment.id'),
+    carId: id(o.carId, 'attachment.carId'),
+    ownerType: owner,
+    ownerId: id(o.ownerId, 'attachment.ownerId'),
+    name: str(o.name, LIMITS.name, 'attachment.name') || 'photo',
+    mime,
+    size: num(o.size, 1, ATTACH_LIMITS.fileBytes) ?? 0,
+    w: dim(o.w),
+    h: dim(o.h),
+    createdAt: ts(o.createdAt),
+  };
+}
+
+/** Вложение из IndexedDB / из приложения: миниатюра должна быть Blob-изображением разумного размера. */
+export function sanitizeAttachment(v: unknown): Attachment {
+  const o = obj(v, 'attachment');
+  const meta = attachmentMeta(o);
+  const t = o.thumb;
+  if (typeof Blob === 'undefined' || !(t instanceof Blob) || t.size === 0 || t.size > ATTACH_LIMITS.thumbBytes) throw new ValidationError('attachment.thumb: некорректная миниатюра');
+  return { ...meta, thumb: t };
+}
+
+/** Вложение из JSON-копии: base64 декодируется и проверяется по сигнатуре файла. */
+export function sanitizeBackupAttachment(v: unknown): BackupAttachment {
+  const o = obj(v, 'attachment');
+  const meta = attachmentMeta(o);
+  const check = (b64: unknown, max: number, what: string) => {
+    if (typeof b64 !== 'string' || b64.length > Math.ceil((max * 4) / 3) + 8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) throw new ValidationError(`${what}: некорректные данные`);
+    const bytes = b64ToBytes(b64);
+    if (bytes.length > max || sniffMime(bytes) === undefined) throw new ValidationError(`${what}: это не изображение`);
+    return b64;
+  };
+  const data = check(o.data, ATTACH_LIMITS.fileBytes, 'attachment.data');
+  const thumb = check(o.thumb, ATTACH_LIMITS.thumbBytes, 'attachment.thumb');
+  return { ...meta, size: Math.min(meta.size || 1, ATTACH_LIMITS.fileBytes), data, thumb };
+}
+
 function list<T>(v: unknown, fn: (x: unknown) => T, what: string): T[] {
   if (v === undefined) return [];
   if (!Array.isArray(v)) throw new ValidationError(`${what}: ожидался массив`);
@@ -174,19 +229,29 @@ export function parseBackup(raw: unknown): Backup {
   const cars = list(o.cars, sanitizeCar, 'cars');
   const carIds = new Set(cars.map((c) => c.id));
   const keepCar = <T extends { carId: ID }>(x: T) => carIds.has(x.carId);
+  const issues = list(o.issues, sanitizeIssue, 'issues').filter(keepCar);
+  const tasks = list(o.tasks, sanitizeTask, 'tasks').filter(keepCar);
+  const logs = list(o.logs, sanitizeLog, 'logs').filter(keepCar);
+  const owners = { issue: new Set(issues.map((x) => x.id)), task: new Set(tasks.map((x) => x.id)), log: new Set(logs.map((x) => x.id)) };
+  let attachments: BackupAttachment[] | undefined;
+  if (o.attachments !== undefined) {
+    if (Array.isArray(o.attachments) && o.attachments.length > ATTACH_LIMITS.maxCount) throw new ValidationError('attachments: слишком много файлов');
+    attachments = list(o.attachments, sanitizeBackupAttachment, 'attachments').filter((a) => keepCar(a) && owners[a.ownerType].has(a.ownerId));
+  }
   return {
     app: 'shtbox',
     version: 1,
     exportedAt: typeof o.exportedAt === 'string' ? o.exportedAt.slice(0, 40) : new Date().toISOString(),
     cars,
-    issues: list(o.issues, sanitizeIssue, 'issues').filter(keepCar),
-    tasks: list(o.tasks, sanitizeTask, 'tasks').filter(keepCar),
-    logs: list(o.logs, sanitizeLog, 'logs').filter(keepCar),
+    issues,
+    tasks,
+    logs,
+    ...(attachments ? { attachments } : {}),
   };
 }
 
 export function parseBackupText(text: string): Backup {
-  if (text.length > 50 * 1024 * 1024) throw new ValidationError('Файл слишком большой');
+  if (text.length > 120 * 1024 * 1024) throw new ValidationError('Файл слишком большой');
   let json: unknown;
   try {
     json = JSON.parse(text);

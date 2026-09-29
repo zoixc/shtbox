@@ -5,9 +5,10 @@ import { todayStr } from './dates';
 import { uid } from './id';
 import { dueInfo, worstState } from './maintenance';
 import type { DueInfo, DueState } from './maintenance';
-import { sanitizeCar, sanitizeIssue, sanitizeLog, sanitizeTask } from './validation';
+import { b64ToBytes, blobToB64 } from './b64';
+import { ATTACH_LIMITS, ValidationError, sanitizeAttachment, sanitizeCar, sanitizeIssue, sanitizeLog, sanitizeTask } from './validation';
 import { BODY_KINDS } from './types';
-import type { Backup, Car, DateStr, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask } from './types';
+import type { Attachment, AttachmentOwner, Backup, BackupAttachment, Car, DateStr, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask } from './types';
 
 export interface ZoneSummary {
   open: number;
@@ -21,6 +22,15 @@ export type NewTask = Pick<MaintenanceTask, 'zoneId' | 'title'> &
   Partial<Pick<MaintenanceTask, 'notes' | 'everyKm' | 'everyMonths' | 'lastDate' | 'lastKm'>>;
 export type NewLog = Pick<LogEntry, 'zoneId' | 'title' | 'date'> &
   Partial<Pick<LogEntry, 'kind' | 'notes' | 'mileage' | 'cost'>>;
+export interface ProcessedImage {
+  name: string;
+  /** полный файл (JPEG/PNG/WebP) */
+  blob: Blob;
+  thumb: Blob;
+  w: number;
+  h: number;
+}
+
 export interface Completion {
   date: DateStr;
   mileage?: number;
@@ -46,6 +56,7 @@ export class Store {
   readonly issues = signal<Issue[]>([]);
   readonly tasks = signal<MaintenanceTask[]>([]);
   readonly logs = signal<LogEntry[]>([]);
+  readonly attachments = signal<Attachment[]>([]);
   readonly activeCarId = signal<string | null>(null);
   readonly ready = signal(false);
   readonly error = signal<string | null>(null);
@@ -69,6 +80,17 @@ export class Store {
     return this.logs.value
       .filter((l) => l.carId === id)
       .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+  });
+  /** вложения активного авто по владельцу: ключ `${ownerType}:${ownerId}` */
+  readonly attachmentsByOwner = computed(() => {
+    const id = this.activeCar.value?.id;
+    const m = new Map<string, Attachment[]>();
+    for (const a of this.attachments.value) {
+      if (a.carId !== id) continue;
+      const k = `${a.ownerType}:${a.ownerId}`;
+      m.set(k, [...(m.get(k) ?? []), a].sort((x, y) => x.createdAt - y.createdAt));
+    }
+    return m;
   });
   /** статус регламентных работ активного авто */
   readonly taskDue = computed(() => {
@@ -107,11 +129,12 @@ export class Store {
   }
 
   async init(): Promise<void> {
-    const [cars, issues, tasks, logs] = await Promise.all([
+    const [cars, issues, tasks, logs, attachments] = await Promise.all([
       this.storage.getAll<unknown>('cars'),
       this.storage.getAll<unknown>('issues'),
       this.storage.getAll<unknown>('tasks'),
       this.storage.getAll<unknown>('logs'),
+      this.storage.getAll<unknown>('attachments'),
     ]);
     // повторная санитаризация: данные в БД тоже не считаем безусловно доверенными
     const safe = <T,>(arr: unknown[], fn: (x: unknown) => T): T[] => {
@@ -129,6 +152,7 @@ export class Store {
     this.issues.value = safe(issues, sanitizeIssue);
     this.tasks.value = safe(tasks, sanitizeTask);
     this.logs.value = safe(logs, sanitizeLog);
+    this.attachments.value = safe(attachments, sanitizeAttachment);
     try {
       const saved = localStorage.getItem(ACTIVE_KEY);
       if (saved && this.cars.value.some((c) => c.id === saved)) this.activeCarId.value = saved;
@@ -185,7 +209,10 @@ export class Store {
     for (const i of this.issues.value) if (i.carId === id) ops.push({ store: 'issues', del: i.id });
     for (const t of this.tasks.value) if (t.carId === id) ops.push({ store: 'tasks', del: t.id });
     for (const l of this.logs.value) if (l.carId === id) ops.push({ store: 'logs', del: l.id });
+    const gone = this.attachments.value.filter((a) => a.carId === id);
+    ops.push(...this.attachmentDelOps(gone));
     await this.commit(ops, () => {
+      this.attachments.value = this.attachments.value.filter((a) => a.carId !== id);
       this.cars.value = this.cars.value.filter((c) => c.id !== id);
       this.issues.value = this.issues.value.filter((c) => c.carId !== id);
       this.tasks.value = this.tasks.value.filter((c) => c.carId !== id);
@@ -264,15 +291,21 @@ export class Store {
     if (!cur || cur.status === 'open') return;
     const issue = sanitizeIssue({ ...cur, status: 'open', doneDate: undefined });
     const stale = this.logs.value.filter((l) => l.ref?.type === 'issue' && l.ref.id === id);
-    const ops: Op[] = [{ store: 'issues', put: issue }, ...stale.map((l): Op => ({ store: 'logs', del: l.id }))];
+    const gone = this.ownedAttachments('log', stale.map((l) => l.id));
+    const ops: Op[] = [{ store: 'issues', put: issue }, ...stale.map((l): Op => ({ store: 'logs', del: l.id })), ...this.attachmentDelOps(gone)];
     await this.commit(ops, () => {
       this.issues.value = this.issues.value.map((i) => (i.id === id ? issue : i));
       this.logs.value = this.logs.value.filter((l) => !stale.includes(l));
+      this.dropAttachments(gone);
     });
   }
 
   async deleteIssue(id: string): Promise<void> {
-    await this.commit([{ store: 'issues', del: id }], () => (this.issues.value = this.issues.value.filter((i) => i.id !== id)));
+    const gone = this.ownedAttachments('issue', [id]);
+    await this.commit([{ store: 'issues', del: id }, ...this.attachmentDelOps(gone)], () => {
+      this.issues.value = this.issues.value.filter((i) => i.id !== id);
+      this.dropAttachments(gone);
+    });
   }
 
   // ---------- Регламент ТО ----------
@@ -302,7 +335,11 @@ export class Store {
   }
 
   async deleteTask(id: string): Promise<void> {
-    await this.commit([{ store: 'tasks', del: id }], () => (this.tasks.value = this.tasks.value.filter((t) => t.id !== id)));
+    const gone = this.ownedAttachments('task', [id]);
+    await this.commit([{ store: 'tasks', del: id }, ...this.attachmentDelOps(gone)], () => {
+      this.tasks.value = this.tasks.value.filter((t) => t.id !== id);
+      this.dropAttachments(gone);
+    });
   }
 
   /** ТО выполнено: запись в журнал + сдвиг «последнего выполнения». */
@@ -362,7 +399,8 @@ export class Store {
   async deleteLog(id: string): Promise<void> {
     const cur = this.logs.value.find((l) => l.id === id);
     if (!cur) return;
-    const ops: Op[] = [{ store: 'logs', del: id }];
+    const gone = this.ownedAttachments('log', [id]);
+    const ops: Op[] = [{ store: 'logs', del: id }, ...this.attachmentDelOps(gone)];
     let nextTask: MaintenanceTask | undefined;
     if (cur.ref?.type === 'task') {
       const rest = this.logs.value
@@ -376,8 +414,54 @@ export class Store {
     }
     await this.commit(ops, () => {
       this.logs.value = this.logs.value.filter((l) => l.id !== id);
+      this.dropAttachments(gone);
       if (nextTask) this.tasks.value = this.tasks.value.map((t) => (t.id === nextTask!.id ? nextTask! : t));
     });
+  }
+
+  // ---------- Вложения (фото, чеки) ----------
+  private ownedAttachments(type: AttachmentOwner, ids: string[]): Attachment[] {
+    const set = new Set(ids);
+    return this.attachments.value.filter((a) => a.ownerType === type && set.has(a.ownerId));
+  }
+  private attachmentDelOps(list: Attachment[]): Op[] {
+    return list.flatMap((a): Op[] => [{ store: 'attachments', del: a.id }, { store: 'blobs', del: a.id }]);
+  }
+  private dropAttachments(list: Attachment[]): void {
+    if (!list.length) return;
+    const ids = new Set(list.map((a) => a.id));
+    this.attachments.value = this.attachments.value.filter((a) => !ids.has(a.id));
+  }
+
+  /** Добавляет уже подготовленное (сжатое, без EXIF) изображение к записи. */
+  async addAttachment(ownerType: AttachmentOwner, ownerId: string, img: ProcessedImage): Promise<Attachment> {
+    const car = this.activeCar.value;
+    if (!car) throw new Error('Нет активного автомобиля');
+    const exists =
+      ownerType === 'issue' ? this.issues.value.some((x) => x.id === ownerId) : ownerType === 'log' ? this.logs.value.some((x) => x.id === ownerId) : this.tasks.value.some((x) => x.id === ownerId);
+    if (!exists) throw new ValidationError('Запись не найдена');
+    const cnt = this.attachments.value.filter((a) => a.ownerType === ownerType && a.ownerId === ownerId).length;
+    if (cnt >= ATTACH_LIMITS.perOwner) throw new ValidationError(`К записи можно прикрепить не больше ${ATTACH_LIMITS.perOwner} фото`);
+    if (img.blob.size > ATTACH_LIMITS.fileBytes) throw new ValidationError('Файл слишком большой');
+    const att = sanitizeAttachment({
+      id: uid(), carId: car.id, ownerType, ownerId, name: img.name, mime: img.blob.type, size: img.blob.size, w: img.w, h: img.h, createdAt: Date.now(), thumb: img.thumb,
+    });
+    await this.commit(
+      [{ store: 'attachments', put: att }, { store: 'blobs', put: { id: att.id, carId: car.id, blob: img.blob } as { id: string } }],
+      () => (this.attachments.value = [...this.attachments.value, att]),
+    );
+    return att;
+  }
+
+  async deleteAttachment(id: string): Promise<void> {
+    const a = this.attachments.value.find((x) => x.id === id);
+    if (!a) return;
+    await this.commit(this.attachmentDelOps([a]), () => this.dropAttachments([a]));
+  }
+
+  async getAttachmentBlob(id: string): Promise<Blob | undefined> {
+    const r = await this.storage.get<{ id: string; blob: Blob }>('blobs', id);
+    return r?.blob;
   }
 
   // ---------- Резервные копии ----------
@@ -393,6 +477,20 @@ export class Store {
     };
   }
 
+  /** Копия с фото (base64). Для больших журналов может быть тяжёлой — фото можно не включать. */
+  async exportSnapshot(includeAttachments: boolean): Promise<Backup> {
+    const b = this.exportBackup();
+    if (!includeAttachments) return b;
+    const attachments: BackupAttachment[] = [];
+    for (const a of this.attachments.value) {
+      const blob = await this.getAttachmentBlob(a.id);
+      if (!blob) continue;
+      const { thumb, ...meta } = a;
+      attachments.push({ ...meta, data: await blobToB64(blob), thumb: await blobToB64(thumb) });
+    }
+    return { ...b, attachments };
+  }
+
   /** merge — добавить/обновить записи по id; replace — заменить все данные. */
   async importBackup(b: Backup, mode: 'merge' | 'replace'): Promise<void> {
     if (mode === 'replace') await this.storage.clearAll();
@@ -402,6 +500,14 @@ export class Store {
       ...b.tasks.map((x): Op => ({ store: 'tasks', put: x })),
       ...b.logs.map((x): Op => ({ store: 'logs', put: x })),
     ];
+    const atts: Attachment[] = [];
+    for (const x of b.attachments ?? []) {
+      const { data, thumb, ...meta } = x;
+      const bytes = b64ToBytes(data);
+      const att = sanitizeAttachment({ ...meta, mime: meta.mime, size: bytes.length, thumb: new Blob([b64ToBytes(thumb) as BlobPart], { type: meta.mime }) });
+      atts.push(att);
+      ops.push({ store: 'attachments', put: att }, { store: 'blobs', put: { id: att.id, carId: att.carId, blob: new Blob([bytes as BlobPart], { type: meta.mime }) } as { id: string } });
+    }
     await this.commit(ops, () => {
       const upsert = <T extends { id: string }>(cur: T[], add: T[]): T[] => {
         const m = new Map(mode === 'replace' ? [] : cur.map((x) => [x.id, x] as const));
@@ -412,6 +518,7 @@ export class Store {
       this.issues.value = upsert(this.issues.value, b.issues);
       this.tasks.value = upsert(this.tasks.value, b.tasks);
       this.logs.value = upsert(this.logs.value, b.logs);
+      this.attachments.value = upsert(this.attachments.value, atts);
     });
     if (!this.cars.value.some((c) => c.id === this.activeCarId.value) && this.cars.value[0]) this.setActiveCar(this.cars.value[0].id);
   }
