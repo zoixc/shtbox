@@ -28,9 +28,9 @@ const disposeObj = (o: Object3D): void => {
 };
 
 /** Объединяет GLB-модель и процедурную «начинку». Чистая функция — тестируется без сети. */
-export function mergeRigs(glb: ModelRig, proc: ModelRig): ModelRig {
+export function mergeRigs(glb: ModelRig, proc: ModelRig, procZones: ReadonlySet<string> = PROCEDURAL_ZONES): ModelRig {
   const keep = new Set<Object3D>();
-  for (const z of PROCEDURAL_ZONES) for (const o of proc.pick.get(z) ?? []) o.traverse((c) => keep.add(c));
+  for (const z of procZones) for (const o of proc.pick.get(z) ?? []) o.traverse((c) => keep.add(c));
   const drop: Object3D[] = [];
   proc.root.traverse((o) => {
     const m = o as Mesh & LineSegments;
@@ -47,7 +47,13 @@ export function mergeRigs(glb: ModelRig, proc: ModelRig): ModelRig {
   const pick = new Map(glb.pick);
   const anchors = new Map(glb.anchors);
   const facing = new Map(glb.facing);
-  for (const z of PROCEDURAL_ZONES) {
+  const paint = new Map(glb.paint);
+  const openables = new Map(glb.openables);
+  for (const z of procZones) {
+    const pm = proc.paint.get(z);
+    if (pm) paint.set(z, pm);
+    const op = proc.openables.get(z);
+    if (op) openables.set(z, op);
     const p = proc.pick.get(z);
     if (p) pick.set(z, p);
     const a = proc.anchors.get(z);
@@ -59,9 +65,9 @@ export function mergeRigs(glb: ModelRig, proc: ModelRig): ModelRig {
   const center = box.getCenter(new Vector3());
   return {
     root,
-    paint: glb.paint,
+    paint,
     pick,
-    openables: glb.openables,
+    openables,
     anchors,
     facing,
     shell: [...glb.shell, ...proc.shell.filter((o) => !dropped.has(o))],
