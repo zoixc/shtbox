@@ -32,7 +32,7 @@ LABEL org.opencontainers.image.title="ShtBox" \
 
 # конфиг и статика принадлежат root и недоступны на запись пользователю nginx (uid 101)
 COPY --chown=root:root --chmod=0644 docker/nginx.conf /etc/nginx/nginx.conf
-COPY --chown=root:root --chmod=0644 docker/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY --chown=root:root --chmod=0644 docker/security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=build --chown=root:root /app/dist /usr/share/nginx/html
 
 USER 101:101
