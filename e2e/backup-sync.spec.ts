@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createCar, modelReady, openDataDialog, openTab } from './helpers';
 
 test('зашифрованная копия: скачать → не содержит открытых данных → импорт по паролю', async ({ page }) => {
-  await createCar(page, { name: 'Секретная-Машина' });
+  await createCar(page, { model: 'sedan-solaris', name: 'Секретная-Машина' });
   await openDataDialog(page);
   await page.getByLabel(/зашифровать паролем/).check();
   await page.getByLabel('Пароль (от 8 символов)').fill('correct horse');
@@ -29,7 +29,7 @@ test('синхронизация двух устройств с шифрован
   // устройство A
   const ctxA = await browser.newContext({ locale: 'ru-RU' });
   const a = await ctxA.newPage();
-  await createCar(a, { name: 'Общая машина', mileage: '12345' });
+  await createCar(a, { model: 'sedan-solaris', name: 'Общая машина', mileage: '12345' });
   await openDataDialog(a);
   await a.getByRole('button', { name: 'Включить синхронизацию' }).click();
   if (await a.getByRole('button', { name: 'Показать' }).isVisible()) await a.getByRole('button', { name: 'Показать' }).click();
@@ -64,7 +64,7 @@ test('синхронизация двух устройств с шифрован
   // чужой ключ: по нему на сервере ничего нет — данные устройства A недоступны
   const ctxC = await browser.newContext({ locale: 'ru-RU' });
   const c = await ctxC.newPage();
-  await createCar(c, { name: 'Чужак' });
+  await createCar(c, { model: 'sedan-solaris', name: 'Чужак' });
   await openDataDialog(c);
   await c.getByRole('button', { name: /Подключить это устройство/ }).click();
   await c.getByLabel('Ключ синхронизации').fill('AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA');
@@ -89,7 +89,7 @@ test('напоминания о ТО: уведомление приходит д
     };
   });
   const page = await ctx.newPage();
-  await createCar(page, { name: 'E2E Напоминания', mileage: '90000' });
+  await createCar(page, { model: 'sedan-solaris', name: 'E2E Напоминания', mileage: '90000' });
   await openTab(page, 'ТО');
   await page.getByRole('button', { name: '+ Регламентная работа' }).click();
   await page.getByLabel('Название').fill('Просроченная замена');

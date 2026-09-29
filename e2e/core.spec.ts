@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { PNG_16, createCar, modelReady, openDataDialog, openTab } from './helpers';
 
 test('дефект на кузове: отметить на модели → выполнить → журнал → переживает перезагрузку', async ({ page }) => {
-  await createCar(page, { name: 'E2E Solaris', mileage: '50000' });
+  await createCar(page, { name: 'E2E BMW GLB', mileage: '50000' }); // модель по умолчанию — детальная BMW 116i (GLB)
   await modelReady(page);
 
   await page.locator('.zrow', { hasText: 'Дверь передняя левая' }).click();
@@ -37,7 +37,7 @@ test('дефект на кузове: отметить на модели → в�
 });
 
 test('регламент: добавить работу с периодичностью и отметить выполненной', async ({ page }) => {
-  await createCar(page, { name: 'E2E ТО', mileage: '80000' });
+  await createCar(page, { name: 'E2E ТО', model: 'sedan-solaris', mileage: '80000' });
   await openTab(page, 'ТО');
   await page.getByRole('button', { name: '+ Регламентная работа' }).click();
   await page.getByLabel('Название').fill('Промывка радиатора E2E');
@@ -55,7 +55,7 @@ test('регламент: добавить работу с периодично�
 });
 
 test('фото и чеки: прикрепить к дефекту, открыть, сохранить в копию', async ({ page }) => {
-  await createCar(page, { name: 'E2E Фото' });
+  await createCar(page, { name: 'E2E Фото', model: 'sedan-solaris' }); // лёгкая модель: сжатие фото не конкурирует с рендером в swiftshader
   await openTab(page, 'Узлы');
   await page.locator('.zrow', { hasText: 'Двигатель' }).first().click();
   await page.getByRole('button', { name: '+ Поломка / доделка / дефект' }).click();
@@ -79,12 +79,15 @@ test('фото и чеки: прикрепить к дефекту, открыт
   expect(json.attachments).toHaveLength(1);
 });
 
-test('BMW 116i: другая модель, другие узлы (задняя дверь хэтча), регламент подставлен', async ({ page }) => {
+test('BMW 116i (GLB): узлы хэтча, открываются все двери, регламент подставлен', async ({ page }) => {
   await createCar(page, { name: 'E2E BMW', model: 'hatch-bmw116i' });
   await modelReady(page);
   await page.getByRole('button', { name: 'Открыть двери, капот, багажник' }).click();
-  await expect(page.getByRole('menuitem', { name: 'Задняя дверь' })).toBeVisible();
-  await page.keyboard.press('Escape');
+  for (const n of ['Капот', 'Задняя дверь', 'Дверь пер. левая', 'Дверь зад. левая', 'Дверь пер. правая', 'Дверь зад. правая']) {
+    await expect(page.getByRole('menuitem', { name: n })).toBeVisible();
+  }
+  await page.getByRole('menuitem', { name: 'Открыть всё' }).click();
+  await expect(page.getByText('Открыто: 6')).toBeVisible();
   await openTab(page, 'ТО');
   await expect(page.locator('.item').first()).toBeVisible();
   await expect(page.locator('.item', { hasText: /масл/i }).first()).toBeVisible();

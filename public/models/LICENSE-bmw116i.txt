@@ -1,0 +1,10 @@
+BMW 116i (F20) — 3D-модель public/models/bmw116i.glb
+
+Основана на модели «BMW 116» автора Peter Stephan
+https://sketchfab.com/3d-models/bmw-116-ed6c50309b1940cf933ca78737fddada
+Лицензия: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+
+Изменения: модель переведена в систему координат приложения (метры, +X вперёд),
+разбита на узлы автомобиля (двери, капот, крышка багажника и др.), материалы заменены,
+геометрия упрощена. См. scripts/prepare-bmw116i.mjs.

@@ -1,5 +1,5 @@
 import type { CarModelDef, GltfModelDef } from './types';
-import { bmw116i } from './hatch/bmw116i';
+import { bmw116i, bmw116iLite } from './hatch/bmw116i';
 import { solaris } from './sedan/solaris';
 
 /**
@@ -15,7 +15,7 @@ export const defineGltfModel = (d: GltfModelDef): CarModelDef => ({
   create: async (color) => (await import('./gltf')).loadGltfRig(d.url, d.zones, color),
 });
 
-const models: CarModelDef[] = [solaris, bmw116i];
+const models: CarModelDef[] = [bmw116i, solaris, bmw116iLite];
 
 export const listModels = (): readonly CarModelDef[] => models;
 export const getModel = (id: string): CarModelDef => models.find((m) => m.id === id) ?? models[0];

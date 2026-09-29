@@ -93,6 +93,7 @@ jobs:
           curl -fsSI localhost:18080/ | grep -i "content-security-policy"
           curl -fsSI localhost:18080/ | grep -i "x-content-type-options: nosniff"
           curl -fsSI localhost:18080/sw.js | grep -i "cache-control: no-cache"
+          curl -fsSI localhost:18080/models/bmw116i.glb | grep -i "content-type: model/gltf-binary"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18080/)" = 403
           docker logs shtbox-ci
       - name: Compose smoke test (web + sync profile, .env variables)

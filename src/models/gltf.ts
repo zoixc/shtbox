@@ -34,6 +34,11 @@ export function parseOpen(v: unknown): OpenExtras | null {
   return { axis: o.axis, angle: o.angle, label: typeof o.label === 'string' ? o.label.slice(0, 40) : undefined };
 }
 
+function hasPaintFlag(m: Object3D, stop: Object3D): boolean {
+  for (let o: Object3D | null = m; o && o !== stop; o = o.parent) if (o.userData.paint === true) return true;
+  return false;
+}
+
 /** Собирает ModelRig из готовой сцены glTF (чистая функция — удобно тестировать без сети). */
 export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintColor: string): ModelRig {
   const byId = new Map(zones.map((z) => [z.id, z]));
@@ -88,9 +93,13 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
       openables.set(id, { pivot, axis: new Vector3(...open.axis).normalize(), angle: open.angle, label: open.label ?? def.label });
     }
 
+    // paint: у меша (или его родителя внутри узла) extras.paint = true — красим только такие меши;
+    // если помеченных нет, а у узла paint = true — красим все меши узла (простой формат)
+    const flagged = meshes.filter((m) => hasPaintFlag(m, node));
+    const paintSet = new Set(flagged.length ? flagged : node.userData.paint === true ? meshes : []);
     for (const m of meshes) {
       m.userData.zone = id;
-      if (node.userData.paint === true && def.paintable) {
+      if (paintSet.has(m) && def.paintable) {
         const pm = createPaintMaterial(paintColor);
         // сохраняем прозрачность/двусторонность исходного материала
         const src = m.material as Material;
@@ -155,9 +164,13 @@ export function assertSafeModelUrl(url: string): void {
   if (!/^\/models\/[\w./-]+\.(glb|gltf)$/.test(url) || url.includes('..')) throw new Error(`Недопустимый путь модели: ${url}`);
 }
 
-export async function loadGltfRig(url: string, zones: readonly ZoneDef[], color: string): Promise<ModelRig> {
+export async function loadGltfScene(url: string): Promise<Object3D> {
   assertSafeModelUrl(url);
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
   const gltf = await new GLTFLoader().loadAsync(url);
-  return rigFromScene(gltf.scene, zones, color);
+  return gltf.scene;
+}
+
+export async function loadGltfRig(url: string, zones: readonly ZoneDef[], color: string): Promise<ModelRig> {
+  return rigFromScene(await loadGltfScene(url), zones, color);
 }

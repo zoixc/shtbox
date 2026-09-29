@@ -79,10 +79,23 @@ export const BMW116I_MAINTENANCE: TaskTemplate[] = [
   { zoneId: 'general', title: 'Антикор / обработка кузова', everyMonths: 24 },
 ];
 
+/** Основная модель: GLB (кузов, салон, колёса) + процедурные агрегаты, см. `hybrid.ts`. */
 export const bmw116i: CarModelDef = {
   id: 'hatch-bmw116i',
   name: 'BMW 116i (F20, хэтчбек)',
-  description: '5-дверный хэтчбек, задний привод. Параметрическая модель без внешних файлов.',
+  description:
+    '5-дверный хэтчбек, задний привод. Детальная 3D-модель (≈130 тыс. треугольников, ~3 МБ, загружается при выборе авто); агрегаты — процедурные. Автор модели — Peter Stephan, CC-BY-4.0.',
+  defaultColor: '#e6e9ec',
+  zones: HATCH_ZONES,
+  defaultMaintenance: BMW116I_MAINTENANCE,
+  create: async (color) => (await import('./hybrid')).createBmw116i(color),
+};
+
+/** Лёгкая версия без внешних файлов — для слабых устройств. */
+export const bmw116iLite: CarModelDef = {
+  id: 'hatch-bmw116i-lite',
+  name: 'BMW 116i (F20) — облегчённая',
+  description: '5-дверный хэтчбек, задний привод. Параметрическая модель без внешних файлов (лёгкая, работает на любом устройстве).',
   defaultColor: '#e6e9ec',
   zones: HATCH_ZONES,
   defaultMaintenance: BMW116I_MAINTENANCE,

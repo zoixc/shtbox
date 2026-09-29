@@ -10,3 +10,5 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 server/Dockerfile
+src/models/*.glb
+scripts

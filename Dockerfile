@@ -21,7 +21,7 @@ COPY server ./server
 COPY tests ./tests
 RUN npm test && npm run build \
  # заранее сжимаем статику (nginx отдаёт .gz через gzip_static)
- && find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.webmanifest' \) -exec gzip -9 -k {} +
+ && find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.webmanifest' -o -name '*.glb' \) -exec gzip -9 -k {} +
 
 # ---------- 2. рантайм: только nginx и статика ----------
 # hadolint ignore=DL3006

@@ -571,10 +571,12 @@ function buildBays(b: Builder, loft: BodyLoft, spec: SedanSpec): void {
 
   // багажник
   const rearWall = bulkhead(loft, -1.3, 0.95, mats.bay());
+  rearWall.userData.bay = true; // остаётся при подмене кузова (см. hatch/hybrid.ts)
   b.root.add(rearWall);
   b.shell.push(rearWall);
   const shelf = new Mesh(new BoxGeometry(0.3, 0.02, 1.3), mats.carpet());
   shelf.position.set(-1.42, 0.95, 0);
+  shelf.userData.bay = true;
   b.root.add(shelf);
   b.shell.push(shelf);
   const tfloor = new Mesh(new BoxGeometry(0.66, 0.02, 1.2), mats.carpet());
