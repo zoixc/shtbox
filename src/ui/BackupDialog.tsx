@@ -23,6 +23,7 @@ export function BackupDialog() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [info, setInfo] = useState('');
+  const [invite, setInvite] = useState('');
 
   // файл
   const [withPhotos, setWithPhotos] = useState(true);
@@ -102,34 +103,34 @@ export function BackupDialog() {
 
   // ---- синхронизация
   const enableSync = () => {
-    updateCfg({ key: generateSyncKey(), rev: null });
+    updateCfg({ key: generateSyncKey(), rev: null, invite: invite.trim() || undefined });
     setShowKey(true);
     setInfo('Ключ создан. Сохраните его в надёжном месте: без него данные с сервера не восстановить.');
   };
   const joinSync = () =>
     run(async () => {
       parseSyncKey(joinKey);
-      updateCfg({ key: fmtKey(joinKey), rev: null });
+      updateCfg({ key: fmtKey(joinKey), rev: null, invite: invite.trim() || undefined });
       setJoining(false);
       setJoinKey('');
       setInfo('Устройство подключено. Нажмите «Получить», чтобы загрузить данные.');
     });
   const push = () =>
     run(async () => {
-      const next = await pushStore(store, cfg!, withPhotos);
+      const next = await pushStore(store, cfg!, withPhotos, { invite: cfg!.invite });
       updateCfg(next);
       setInfo(`Отправлено (ревизия ${next.rev}).`);
     });
   const pull = () =>
     run(async () => {
-      const client = await SyncClient.create(cfg!.key);
+      const client = await SyncClient.create(cfg!.key, { invite: cfg!.invite });
       const got = await client.pull();
       if (!got) return setInfo('На сервере пока пусто — нажмите «Отправить» на устройстве, где есть данные.');
       setPending({ backup: got.backup, source: { kind: 'sync', rev: got.rev } });
     });
   const wipeServer = () =>
     run(async () => {
-      await (await SyncClient.create(cfg!.key)).remove();
+      await (await SyncClient.create(cfg!.key, { invite: cfg!.invite })).remove();
       updateCfg({ ...cfg!, rev: null });
       setInfo('Данные на сервере удалены.');
     });
@@ -181,6 +182,9 @@ export function BackupDialog() {
         {!cfg && !joining && (
           <>
             <p class="hint">Нужен сервер синхронизации (см. README, <code>docker compose --profile sync up</code>). Сервер хранит только зашифрованные данные; ключ создаётся здесь и известен только вам.</p>
+            <Field label="Код-приглашение (только если сервер его требует)">
+              <input value={invite} maxLength={64} autocomplete="off" spellcheck={false} onInput={(e) => setInvite((e.target as HTMLInputElement).value)} />
+            </Field>
             <div class="form-actions">
               <button class="btn" onClick={enableSync}>Включить синхронизацию</button>
               <button class="btn" onClick={() => setJoining(true)}>Подключить это устройство по ключу…</button>

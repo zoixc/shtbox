@@ -42,17 +42,54 @@ Node ≥ 20.
 
 ## Docker
 
-Образ — статика в `nginx-unprivileged` (Alpine): ~50 МБ, без Node в рантайме, без root.
+Образ — статика в `nginx-unprivileged` (Alpine): без Node в рантайме, без root. **Файл `.env` не нужен**: приложение статическое и работает без каких-либо переменных окружения и секретов. Необязательные настройки (порт, код-приглашение для сервера синхронизации) описаны в [`.env.example`](.env.example).
+
+### Быстрый старт
+
+Нужны Docker 24+ и плагин Compose v2 (`docker compose version`).
 
 ```bash
-docker compose up -d --build     # http://localhost:8080
-# или без compose:
+git clone https://github.com/zoixc/shtbox.git && cd shtbox
+docker compose up -d --build        # первая сборка ~1–2 мин: ставит зависимости и гоняет тесты
+```
+
+Откройте http://localhost:8080. Проверка: `curl -fsS localhost:8080/healthz` → `ok`, `docker compose ps` → `healthy`.
+
+| Задача | Команда |
+| --- | --- |
+| Логи | `docker compose logs -f shtbox` |
+| Остановить / запустить | `docker compose stop` / `docker compose start` |
+| Обновить до новой версии | `git pull && docker compose up -d --build` |
+| Удалить контейнер (данные автомобилей остаются в браузере) | `docker compose down` |
+| Другой порт | `SHTBOX_PORT=9090 docker compose up -d` или строка `SHTBOX_PORT=9090` в `.env` |
+| Вместе с сервером синхронизации | `docker compose --profile sync up -d --build` (см. [ниже](#синхронизация-и-шифрование)) |
+
+Без compose:
+
+```bash
 docker build -t shtbox .
 docker run -d --name shtbox -p 127.0.0.1:8080:8080 \
   --read-only --tmpfs /tmp:size=16m,mode=1777,noexec,nosuid,nodev \
   --cap-drop ALL --security-opt no-new-privileges:true \
   --pids-limit 64 --memory 128m --cpus 0.5 shtbox
 ```
+
+**Доступ с других устройств.** Порт привязан к `127.0.0.1`, чтобы приложение случайно не оказалось в открытой сети. Для доступа снаружи поставьте перед контейнером TLS-прокси — service worker, установка как PWA и уведомления работают только по HTTPS (или на localhost). Пример для Caddy (сертификат выпускается автоматически):
+
+```
+shtbox.example.com {
+    reverse_proxy 127.0.0.1:8080
+    header Strict-Transport-Security "max-age=31536000"
+}
+```
+
+**Данные** хранятся в браузере (IndexedDB), а не в контейнере: у сервиса `shtbox` нет томов, его можно пересоздавать когда угодно. Чтобы перенести данные между устройствами — резервная копия или синхронизация (меню ☰ → «Данные»).
+
+**Если не запускается**
+
+- `port is already allocated` — порт 8080 занят: задайте `SHTBOX_PORT`.
+- Страница открывается, но нет установки PWA/уведомлений — вы зашли по обычному `http://` не с localhost; нужен HTTPS.
+- Сборка падает на этапе тестов — приложите вывод `docker compose build --progress=plain`; тесты идут внутри сборки, чтобы образ не собрался из сломанного кода.
 
 Что сделано для безопасности:
 
@@ -65,9 +102,7 @@ docker run -d --name shtbox -p 127.0.0.1:8080:8080 \
 - Порт в compose привязан к `127.0.0.1`. Для доступа снаружи поставьте перед контейнером TLS-прокси (Caddy/Traefik/nginx) и включите на нём HSTS: service worker и `storage.persist()` работают только по HTTPS (или localhost).
 - Для воспроизводимости зафиксируйте базовые образы по digest: `--build-arg NODE_IMAGE=node:22-alpine@sha256:…`, `--build-arg NGINX_IMAGE=nginxinc/nginx-unprivileged:stable-alpine@sha256:…`.
 
-Дополнительно можно проверить образ: `docker scout cves shtbox`, `trivy image shtbox`.
-
-Данные пользователя хранятся в браузере (IndexedDB), поэтому у контейнера `web` нет томов и состояния. Том есть только у необязательного сервиса `sync` (см. ниже).
+Проверить образ на уязвимости: `docker scout cves shtbox` или `trivy image shtbox` (в CI Trivy проверяет каждый PR). Том есть только у необязательного сервиса `sync`.
 
 ## Синхронизация и шифрование
 

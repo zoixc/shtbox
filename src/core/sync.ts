@@ -31,13 +31,15 @@ export interface SyncConfig {
   /** ревизия, с которой устройство синхронизировалось в последний раз */
   rev: number | null;
   at?: number;
+  /** код-приглашение, если сервер синхронизации закрыт для создания новых хранилищ (INVITE) */
+  invite?: string;
 }
 
 const CFG_KEY = 'shtbox.sync';
 export function loadSyncConfig(): SyncConfig | null {
   try {
     const v = JSON.parse(localStorage.getItem(CFG_KEY) ?? 'null');
-    if (v && typeof v.key === 'string') return { key: v.key, rev: typeof v.rev === 'number' ? v.rev : null, at: typeof v.at === 'number' ? v.at : undefined };
+    if (v && typeof v.key === 'string') return { key: v.key, rev: typeof v.rev === 'number' ? v.rev : null, at: typeof v.at === 'number' ? v.at : undefined, invite: typeof v.invite === 'string' && v.invite ? v.invite.slice(0, 64) : undefined };
   } catch {
     /* ignore */
   }

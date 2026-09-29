@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     # только localhost; наружу публикуйте через TLS-прокси (Caddy/Traefik/nginx)
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${SHTBOX_PORT:-8080}:8080"
     user: "101:101"
     read_only: true
     tmpfs:
@@ -50,7 +50,8 @@ services:
       TRUST_PROXY: "1"
       MAX_BYTES: "26214400"   # 25 МБ на хранилище
       MAX_ENTRIES: "200"      # максимум хранилищ на сервере
-      # INVITE: "change-me"   # если задан, создавать новые хранилища можно только с этим кодом (заголовок X-Invite)
+      # если SYNC_INVITE задан (в .env или окружении), создавать новые хранилища можно только с этим кодом (заголовок X-Invite)
+      INVITE: "${SYNC_INVITE:-}"
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
