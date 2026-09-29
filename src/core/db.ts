@@ -3,7 +3,9 @@
  * поэтому, например, «закрыть дефект + записать в журнал» атомарно.
  * Есть in-memory реализация (для тестов и на случай, когда IndexedDB недоступна).
  */
-export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs'] as const;
+export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs', 'meta'] as const;
+/** Хранилища, которые НЕ очищаются при «заменить все данные» при импорте (настройки приложения). */
+const KEEP_ON_CLEAR: readonly string[] = ['meta'];
 export type StoreName = (typeof STORES)[number];
 
 export type Op = { store: StoreName; put: { id: string } } | { store: StoreName; del: string };
@@ -17,7 +19,7 @@ export interface Storage {
 }
 
 const DB_NAME = 'shtbox';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const wrap = <T>(req: IDBRequest<T>) =>
   new Promise<T>((res, rej) => {
@@ -44,7 +46,7 @@ export class IdbStorage implements Storage {
         for (const s of STORES) {
           if (!db.objectStoreNames.contains(s)) {
             const os = db.createObjectStore(s, { keyPath: 'id' });
-            if (s !== 'cars') os.createIndex('carId', 'carId');
+            if (s !== 'cars' && s !== 'meta') os.createIndex('carId', 'carId');
           }
         }
       };
@@ -77,8 +79,9 @@ export class IdbStorage implements Storage {
   }
 
   async clearAll(): Promise<void> {
-    const tx = this.db.transaction([...STORES], 'readwrite');
-    for (const s of STORES) tx.objectStore(s).clear();
+    const names = STORES.filter((s) => !KEEP_ON_CLEAR.includes(s));
+    const tx = this.db.transaction(names, 'readwrite');
+    for (const s of names) tx.objectStore(s).clear();
     await txDone(tx);
   }
 }
@@ -102,7 +105,7 @@ export class MemoryStorage implements Storage {
     }
   }
   async clearAll(): Promise<void> {
-    for (const m of this.data.values()) m.clear();
+    for (const [name, m] of this.data) if (!KEEP_ON_CLEAR.includes(name)) m.clear();
   }
 }
 

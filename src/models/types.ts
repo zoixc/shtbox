@@ -86,3 +86,6 @@ export interface CarModelDef {
   /** Создаёт 3D-модель. Загрузка ленивая, чтобы three.js не попадал в стартовый бандл. */
   create(color: string): Promise<ModelRig>;
 }
+
+/** Описание модели, геометрия которой лежит в glTF/GLB (см. `src/models/gltf.ts` и `docs/ADDING_MODELS.md`). */
+export type GltfModelDef = Omit<CarModelDef, 'create'> & { url: string };

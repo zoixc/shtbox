@@ -124,6 +124,15 @@ export class Store {
 
   constructor(private storage: Storage) {}
 
+  /** Настройки приложения (не входят в резервные копии). */
+  async getMeta<T>(key: string): Promise<T | undefined> {
+    const rec = await this.storage.get<{ id: string; value: T }>('meta', key);
+    return rec?.value;
+  }
+  async setMeta(key: string, value: unknown): Promise<void> {
+    await this.storage.apply([{ store: 'meta', put: { id: key, value } as { id: string } }]);
+  }
+
   get persistent(): boolean {
     return this.storage.persistent;
   }

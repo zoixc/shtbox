@@ -8,6 +8,7 @@ import { store, toast, ui } from '../state';
 import { download } from '../util';
 import { ConfirmButton, Field } from './common';
 import { Modal } from './Dialogs';
+import { RemindersSection } from './Reminders';
 
 const fmtKey = (k: string) => k.toUpperCase().replace(/[\s-]/g, '').match(/.{4}/g)?.join('-') ?? k;
 const maskKey = (k: string) => `••••-••••-••••-••••-••••-••••-••••-${k.slice(-4)}`;
@@ -134,10 +135,12 @@ export function BackupDialog() {
     });
 
   return (
-    <Modal title="Резервная копия и синхронизация" onClose={close} wide>
+    <Modal title="Данные, синхронизация и напоминания" onClose={close} wide>
       <div class="form">
         <p class="hint">Данные хранятся только в этом браузере (IndexedDB). Копию можно перенести на другое устройство файлом или через собственный сервер синхронизации — всё шифруется на вашем устройстве.</p>
         {!store.persistent && <p class="form-error">IndexedDB недоступна: данные пропадут после закрытия вкладки. Скачайте копию!</p>}
+
+        <RemindersSection />
 
         <h3 class="dlg-h">Файл</h3>
         <label class="check">

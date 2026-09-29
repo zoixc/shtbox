@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import './styles.css';
 import { App } from './App';
+import { initReminders } from './notify';
 import { initStore } from './state';
 
 async function boot() {
@@ -9,6 +10,7 @@ async function boot() {
     const store = await initStore();
     if (import.meta.env.DEV) (window as unknown as { __store: unknown }).__store = store;
     render(<App />, root);
+    void initReminders(store);
   } catch (e) {
     console.error(e);
     root.textContent = 'Не удалось запустить приложение: ' + (e instanceof Error ? e.message : String(e));

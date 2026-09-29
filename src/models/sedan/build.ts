@@ -33,6 +33,12 @@ import type { BodySpec } from './loft';
 
 export interface SedanSpec {
   body: BodySpec;
+  /** форма задней части: седан (крышка багажника + неподвижное заднее стекло) или хэтчбек (5-я дверь со стеклом) */
+  tail?: 'notchback' | 'hatch';
+  /** привод: FWD — поперечный двигатель, RWD — продольный двигатель, карданный вал и редуктор */
+  drive?: 'fwd' | 'rwd';
+  /** решётка радиатора: широкая или «ноздри» */
+  grille?: 'wide' | 'kidney';
   xFront: number;
   xRear: number;
   frontAxleX: number;
@@ -242,11 +248,13 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
 
   own.rect('shell', 0, grid.rows - 1, 0, LOOP_N);
   // greenhouse + крыша, затем перекрываем деталями
-  own.center('roof', X.cowl, X.trunkFront, J_TOP0, J_TOP1);
+  const hatch = spec.tail === 'hatch';
+  own.center('roof', X.cowl, hatch ? X.roofRear : X.trunkFront, J_TOP0, J_TOP1);
   own.center('hood', X.bumperFront, X.cowl, J_TOP0, J_TOP1);
-  own.center('trunk', X.trunkFront, X.bumperRear, J_TOP0, J_TOP1);
+  own.center('trunk', hatch ? X.roofRear : X.trunkFront, X.bumperRear, J_TOP0, J_TOP1);
   own.center('windshield', X.cowl, X.roofFront, K6, LOOP_N - K6);
-  own.center('rear_glass', X.roofRear, X.trunkFront, K6, LOOP_N - K6);
+  // у хэтчбека заднее стекло — часть 5-й двери и поднимается вместе с ней
+  own.center(hatch ? 'trunk:glass' : 'rear_glass', X.roofRear, X.trunkFront, K6, LOOP_N - K6);
   own.side('fender_fr', 'fender_fl', X.bumperFront, X.doorFront, K_IDX[1], K5);
   own.side('quarter_rr', 'quarter_rl', X.doorRear, X.bumperRear, K_IDX[1], K5);
   own.side('sill_r', 'sill_l', X.doorFront, X.doorRear, K_IDX[1], K2 + 1);
@@ -285,7 +293,9 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   const midDoorR = (X.doorSplit + X.doorRear) / 2;
   const defs: PanelDef[] = [
     { zone: 'hood', hinge: [X.cowl, cowlY, 0], axis: [0, 0, 1], angle: 1.0, label: 'Капот', anchor: [1.25, loft.topY(1.25) + 0.01, 0], facing: [0, 1, 0] },
-    { zone: 'trunk', hinge: [X.trunkFront, trunkY, 0], axis: [0, 0, 1], angle: -1.0, label: 'Багажник', anchor: [-1.65, loft.topY(-1.65) + 0.01, 0], facing: [0, 1, 0] },
+    hatch
+      ? { zone: 'trunk', hinge: [X.roofRear, loft.topY(X.roofRear) - 0.02, 0], axis: [0, 0, 1], angle: -1.2, label: 'Задняя дверь', anchor: [X.trunkFront - 0.1, loft.topY(X.trunkFront - 0.1) + 0.01, 0], facing: [-1, 0.5, 0] }
+      : { zone: 'trunk', hinge: [X.trunkFront, trunkY, 0], axis: [0, 0, 1], angle: -1.0, label: 'Багажник', anchor: [-1.65, loft.topY(-1.65) + 0.01, 0], facing: [0, 1, 0] },
     { zone: 'roof', anchor: [-0.35, loft.topY(-0.35) + 0.01, 0], facing: [0, 1, 0] },
     { zone: 'bumper_f', anchor: [spec.xFront + 0.01, 0.5, 0], facing: [1, 0, 0] },
     { zone: 'bumper_r', anchor: [spec.xRear - 0.01, 0.5, 0], facing: [-1, 0, 0] },
@@ -340,7 +350,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   // ---- стёкла кузова
   for (const [zone, anchor, facing] of [
     ['windshield', [0.38, loft.topY(0.38) + 0.02, 0], [1, 0.6, 0]],
-    ['rear_glass', [-1.1, loft.topY(-1.1) + 0.02, 0], [-1, 0.6, 0]],
+    ...(hatch ? [] : [['rear_glass', [-1.1, loft.topY(-1.1) + 0.02, 0], [-1, 0.6, 0]]]),
   ] as [string, Vec3, Vec3][]) {
     const content = b.panel(zone);
     const g = extractPanel(grid, own, zone, (o) => o === zone);
@@ -421,10 +431,11 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     // решётка и воздухозаборники, номерной знак
     const c = contentOf.get('bumper_f')!;
     const xf = spec.xFront;
-    for (const [w, h, y, z] of [
-      [0.78, 0.13, 0.58, 0],
-      [0.9, 0.09, 0.4, 0],
-    ] as const) {
+    const grilles: readonly (readonly [number, number, number, number])[] =
+      spec.grille === 'kidney'
+        ? [[0.21, 0.15, 0.6, 0.125], [0.21, 0.15, 0.6, -0.125], [0.9, 0.08, 0.4, 0]]
+        : [[0.78, 0.13, 0.58, 0], [0.9, 0.09, 0.4, 0]];
+    for (const [w, h, y, z] of grilles) {
       const m = new Mesh(box(0.03, h, w, 0.012), mats.trim());
       m.position.set(xf + 0.004 - 0.005, y, z);
       m.userData.zone = 'bumper_f';
@@ -602,15 +613,28 @@ function buildMech(b: Builder, spec: SedanSpec): void {
   b.root.add(g);
   const add = (zone: string, geo: BufferGeometry, mat: Material, at: Vec3, rot?: Vec3) => b.mesh(geo, mat, g, zone, at, rot);
 
-  // двигатель (поперечный) и КПП
-  add('engine', box(0.62, 0.5, 0.62, 0.05), mats.engine(), [1.3, 0.5, 0.12]);
-  add('engine', box(0.3, 0.09, 0.5, 0.03), mats.engineDark(), [1.42, 0.8, 0.12]);
-  add('engine', new CylinderGeometry(0.06, 0.06, 0.16, 16), mats.engineDark(), [1.3, 0.5, 0.46], [Math.PI / 2, 0, 0]);
-  add('engine', box(0.5, 0.36, 0.06, 0.02), mats.engineDark(), [1.3, 0.55, 0.45]);
-  b.anchor('engine', g, [1.3, 0.85, 0.12]);
-  add('gearbox', box(0.46, 0.42, 0.36, 0.06), mats.gearbox(), [1.25, 0.44, -0.5]);
-  add('gearbox', new CylinderGeometry(0.11, 0.11, 0.2, 20), mats.gearbox(), [1.25, 0.44, -0.72], [Math.PI / 2, 0, 0]);
-  b.anchor('gearbox', g, [1.25, 0.68, -0.5]);
+  if (spec.drive === 'rwd') {
+    // продольный двигатель, КПП под тоннелем, карданный вал и задний редуктор
+    add('engine', box(0.66, 0.46, 0.56, 0.05), mats.engine(), [1.3, 0.5, 0]);
+    add('engine', box(0.5, 0.09, 0.44, 0.03), mats.engineDark(), [1.32, 0.78, 0]);
+    add('engine', new CylinderGeometry(0.07, 0.07, 0.1, 16), mats.engineDark(), [1.66, 0.5, 0], [0, 0, Math.PI / 2]);
+    b.anchor('engine', g, [1.3, 0.85, 0]);
+    add('gearbox', new CylinderGeometry(0.15, 0.13, 0.62, 20), mats.gearbox(), [0.68, 0.42, 0], [0, 0, Math.PI / 2]);
+    add('gearbox', new CylinderGeometry(0.03, 0.03, 0.36 + Math.abs(spec.rearAxleX), 12), mats.metal(), [(0.36 + spec.rearAxleX) / 2, 0.36, 0], [0, 0, Math.PI / 2]);
+    add('gearbox', box(0.3, 0.24, 0.28, 0.06), mats.gearbox(), [spec.rearAxleX, 0.34, 0]);
+    for (const s of [-1, 1] as const) add('gearbox', new CylinderGeometry(0.022, 0.022, spec.trackHalf - 0.15, 10), mats.metal(), [spec.rearAxleX, 0.34, s * (spec.trackHalf / 2 + 0.05)], [Math.PI / 2, 0, 0]);
+    b.anchor('gearbox', g, [0.68, 0.62, 0]);
+  } else {
+    // двигатель (поперечный) и КПП
+    add('engine', box(0.62, 0.5, 0.62, 0.05), mats.engine(), [1.3, 0.5, 0.12]);
+    add('engine', box(0.3, 0.09, 0.5, 0.03), mats.engineDark(), [1.42, 0.8, 0.12]);
+    add('engine', new CylinderGeometry(0.06, 0.06, 0.16, 16), mats.engineDark(), [1.3, 0.5, 0.46], [Math.PI / 2, 0, 0]);
+    add('engine', box(0.5, 0.36, 0.06, 0.02), mats.engineDark(), [1.3, 0.55, 0.45]);
+    b.anchor('engine', g, [1.3, 0.85, 0.12]);
+    add('gearbox', box(0.46, 0.42, 0.36, 0.06), mats.gearbox(), [1.25, 0.44, -0.5]);
+    add('gearbox', new CylinderGeometry(0.11, 0.11, 0.2, 20), mats.gearbox(), [1.25, 0.44, -0.72], [Math.PI / 2, 0, 0]);
+    b.anchor('gearbox', g, [1.25, 0.68, -0.5]);
+  }
   // АКБ и электрика
   add('battery', box(0.24, 0.17, 0.17, 0.01), mats.battery(), [1.62, 0.7, -0.5]);
   add('battery', box(0.03, 0.03, 0.03, 0.005), mats.chrome(), [1.56, 0.8, -0.46]);

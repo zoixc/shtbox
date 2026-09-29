@@ -69,7 +69,7 @@ function Topbar() {
       )}
       <button class="btn btn-ghost hide-mobile" onClick={() => (ui.dialog.value = 'car-new')}>+ Авто</button>
       <span class="spacer" />
-      <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'backup')}>Копия</button>
+      <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'backup')}>Данные</button>
       <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'help')} aria-label="Справка">?</button>
     </header>
   );
