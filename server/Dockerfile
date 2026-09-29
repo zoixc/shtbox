@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG NODE_IMAGE=node:22-alpine
+# hadolint ignore=DL3006
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production PORT=8081 DATA_DIR=/data
 WORKDIR /app
