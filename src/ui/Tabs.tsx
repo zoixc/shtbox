@@ -7,7 +7,7 @@ import { LOG_KIND_LABEL } from '../core/types';
 import type { LogKind } from '../core/types';
 import { activeModel, guard, selectZone, store, toast } from '../state';
 import { csvCell, download, fmtKm, fmtMoney } from '../util';
-import { Chip, Empty, Section } from './common';
+import { Chip, Empty, Menu, Section } from './common';
 import { LogForm, TaskForm } from './forms';
 import { IssueItem, LogItem, TaskItem } from './items';
 import { zoneLabel } from '../state';
@@ -23,12 +23,11 @@ export function ZoneList() {
   const soon = [...store.taskDue.value.values()].filter((d) => d.state === 'soon').length;
   return (
     <div>
-      <div class="stats">
-        <div class="stat"><b>{openTotal}</b><span>открытых записей</span></div>
-        <div class={`stat ${overdue ? 'stat-red' : ''}`}><b>{overdue}</b><span>ТО просрочено</span></div>
-        <div class={`stat ${soon ? 'stat-amber' : ''}`}><b>{soon}</b><span>ТО скоро</span></div>
+      <div class="stats" title="Клик по узлу на модели или в списке открывает его панель. Двойной клик по двери, капоту или багажнику — открыть.">
+        <span class="stat"><b>{openTotal}</b> открыто</span>
+        <span class={`stat ${overdue ? 'stat-red' : ''}`}><b>{overdue}</b> ТО просрочено</span>
+        <span class={`stat ${soon ? 'stat-amber' : ''}`}><b>{soon}</b> скоро</span>
       </div>
-      <p class="hint">Кликните по узлу на 3D-модели или выберите из списка. Двойной клик по двери/капоту/багажнику — открыть.</p>
       <input class="search" type="search" placeholder="Поиск узла…" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
       {groups.map((g) => {
         const zs = model.zones.filter((z) => z.group === g && (!needle || z.label.toLowerCase().includes(needle)));
@@ -74,22 +73,25 @@ export function TasksTab() {
     download(`maintenance-${car!.name.replace(/[^\w-]+/g, '_')}.ics`, ics, 'text/calendar;charset=utf-8');
   };
   const missing = model.defaultMaintenance.filter((t) => !tasks.some((x) => x.title === t.title && x.zoneId === t.zoneId));
+  const addMissing = async () => {
+    await guard(store.addTasks(missing));
+    toast(`Добавлено работ: ${missing.length}. Укажите, когда они выполнялись последний раз.`);
+  };
   return (
     <div>
       <div class="tab-actions">
         <button class="btn btn-primary" onClick={() => setAdding(true)}>+ Регламентная работа</button>
-        {missing.length > 0 && (
-          <button
-            class="btn"
-            onClick={async () => {
-              await guard(store.addTasks(missing));
-              toast(`Добавлено работ: ${missing.length}. Укажите, когда они выполнялись последний раз.`);
-            }}
-          >
-            Типовой регламент ({missing.length})
-          </button>
-        )}
-        <button class="btn" onClick={exportIcs} disabled={!tasks.length} title="Даты ТО в календарь (.ics) с напоминанием за 7 дней">Календарь</button>
+        {missing.length > 0 && !tasks.length && <button class="btn" onClick={addMissing}>Типовой регламент ({missing.length})</button>}
+        <Menu
+          align="right"
+          class="btn-ghost push-right"
+          label="⋯"
+          ariaLabel="Ещё"
+          items={[
+            ...(missing.length > 0 && tasks.length ? [{ label: `Добавить типовой регламент (${missing.length})`, onSelect: addMissing }] : []),
+            { label: 'Экспорт в календарь (.ics)', onSelect: exportIcs },
+          ]}
+        />
       </div>
       {adding && <TaskForm zoneId="general" onDone={() => setAdding(false)} />}
       {sorted.length ? sorted.map((t) => <TaskItem task={t} key={t.id} showZone />) : <Empty>Регламент пока пуст. Добавьте типовой набор работ или создайте свои.</Empty>}
@@ -132,7 +134,7 @@ export function LogTab() {
     <div>
       <div class="tab-actions">
         <button class="btn btn-primary" onClick={() => setAdding(true)}>+ Записать работу</button>
-        <button class="btn" onClick={exportCsv} disabled={!list.length}>CSV</button>
+        <Menu align="right" class="btn-ghost push-right" label="⋯" ariaLabel="Ещё" items={[{ label: 'Экспорт журнала (CSV)', onSelect: () => (list.length ? exportCsv() : toast('В журнале пока пусто.', 'err')) }]} />
       </div>
       {adding && <LogForm zoneId="general" onDone={() => setAdding(false)} />}
       <div class="filters">

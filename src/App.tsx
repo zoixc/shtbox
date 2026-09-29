@@ -4,7 +4,7 @@ import { guard, selectZone, store, ui } from './state';
 import type { SidebarTab } from './state';
 import { BackupDialog } from './ui/BackupDialog';
 import { CarDialog, HelpDialog, PhotoDialog } from './ui/Dialogs';
-import { Empty } from './ui/common';
+import { Empty, Menu } from './ui/common';
 import { IssuesTab, LogTab, TasksTab, ZoneList } from './ui/Tabs';
 import { ZonePanel } from './ui/ZonePanel';
 import { fmtKm, parseNum } from './util';
@@ -64,13 +64,24 @@ function Topbar() {
             <option value="__new">+ Добавить автомобиль…</option>
           </select>
           <MileageEditor />
-          <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'car-edit')}>Авто</button>
         </>
       )}
-      <button class="btn btn-ghost hide-mobile" onClick={() => (ui.dialog.value = 'car-new')}>+ Авто</button>
       <span class="spacer" />
-      <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'backup')}>Данные</button>
-      <button class="btn btn-ghost" onClick={() => (ui.dialog.value = 'help')} aria-label="Справка">?</button>
+      <Menu
+        align="right"
+        ariaLabel="Меню"
+        label="☰"
+        title="Меню"
+        class="btn-ghost menu-btn"
+        items={[
+          ...(car ? [{ label: 'Изменить автомобиль…', onSelect: () => (ui.dialog.value = 'car-edit') }] : []),
+          { label: 'Добавить автомобиль…', onSelect: () => (ui.dialog.value = 'car-new') },
+          { separator: true, label: '', onSelect: () => {} },
+          { label: 'Данные, синхронизация, напоминания', onSelect: () => (ui.dialog.value = 'backup') },
+          { separator: true, label: '', onSelect: () => {} },
+          { label: 'Справка', onSelect: () => (ui.dialog.value = 'help') },
+        ]}
+      />
     </header>
   );
 }

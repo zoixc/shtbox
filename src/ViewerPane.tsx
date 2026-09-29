@@ -2,6 +2,7 @@ import { effect } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { getModel } from './models/registry';
 import { LAYERS } from './models/types';
+import { Menu } from './ui/common';
 import { selectZone, setLayer, store, ui, viewerCommands } from './state';
 import type { Viewer } from './view3d/Viewer';
 
@@ -113,19 +114,24 @@ export function ViewerPane() {
       )}
 
       <div class="view-bar">
-        {VIEWS.map(([id, label]) => (
-          <button key={id} class="btn btn-glass" onClick={() => viewerCommands.view?.(id)}>{label}</button>
-        ))}
-      </div>
-
-      <div class="open-bar">
-        <span class="open-title">Открыть</span>
-        {openables.map((o) => (
-          <button key={o.id} class={`chip-btn ${open.includes(o.id) ? 'chip-btn-on' : ''}`} onClick={() => viewerCommands.toggleOpen?.(o.id)}>
-            {o.label}
-          </button>
-        ))}
-        <button class="chip-btn" onClick={() => viewerCommands.setAllOpen?.(open.length === 0)}>{open.length ? 'Закрыть всё' : 'Открыть всё'}</button>
+        <Menu
+          up
+          class="btn-glass"
+          label="Вид ▴"
+          ariaLabel="Ракурс камеры"
+          items={VIEWS.map(([id, label]) => ({ label, onSelect: () => viewerCommands.view?.(id) }))}
+        />
+        <Menu
+          up
+          class="btn-glass"
+          label={open.length ? `Открыто: ${open.length} ▴` : 'Открыть ▴'}
+          ariaLabel="Открыть двери, капот, багажник"
+          items={[
+            ...openables.map((o) => ({ label: o.label, active: open.includes(o.id), hint: open.includes(o.id) ? 'открыто' : undefined, keepOpen: true, onSelect: () => viewerCommands.toggleOpen?.(o.id) })),
+            { separator: true, label: '', onSelect: () => {} },
+            { label: open.length ? 'Закрыть всё' : 'Открыть всё', onSelect: () => viewerCommands.setAllOpen?.(open.length === 0) },
+          ]}
+        />
       </div>
       </>)}
     </div>

@@ -72,9 +72,9 @@ const mats = {
   shell: () => std(0x1a1d21, { rough: 0.85, side: DoubleSide }),
   glass: () =>
     enhanceMaterial(
-      new MeshPhysicalMaterial({ color: 0x0c1218, metalness: 0.85, roughness: 0.04, transparent: true, opacity: 0.5, depthWrite: false, envMapIntensity: 1.4 }),
+      new MeshPhysicalMaterial({ color: 0x070b10, metalness: 0.8, roughness: 0.05, transparent: true, opacity: 0.78, depthWrite: false, envMapIntensity: 1.4 }),
     ),
-  lightF: () => enhanceMaterial(new MeshPhysicalMaterial({ color: 0xcfd8e2, roughness: 0.08, metalness: 0.3, clearcoat: 1, emissive: 0x151a20 })),
+  lightF: () => enhanceMaterial(new MeshPhysicalMaterial({ color: 0x9aa7b5, roughness: 0.06, metalness: 0.5, clearcoat: 1, emissive: 0x0d1116 })),
   lightR: () => enhanceMaterial(new MeshPhysicalMaterial({ color: 0x7d0c12, roughness: 0.12, metalness: 0.2, clearcoat: 1, emissive: 0x2a0305 })),
   trim: () => std(0x0e1013, { rough: 0.55 }),
   chrome: () => std(0xc7ccd2, { rough: 0.2, metal: 1 }),
@@ -262,10 +262,10 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   own.side('door_rr', 'door_rl', X.doorSplit, X.doorRear, K2 + 1, K6);
   // стёкла дверей (с рамкой)
   const gi = (x: number, d: number) => grid.idx(x) + d;
-  own.rect('door_fr:glass', gi(X.doorFront, 2), gi(X.doorSplit, -1), K5 + 1, K6 - 1);
-  own.rect('door_fl:glass', gi(X.doorFront, 2), gi(X.doorSplit, -1), LOOP_N - (K6 - 1), LOOP_N - (K5 + 1));
-  own.rect('door_rr:glass', gi(X.doorSplit, 1), gi(X.doorRear, -2), K5 + 1, K6 - 1);
-  own.rect('door_rl:glass', gi(X.doorSplit, 1), gi(X.doorRear, -2), LOOP_N - (K6 - 1), LOOP_N - (K5 + 1));
+  own.rect('door_fr:glass', gi(X.doorFront, 1), gi(X.doorSplit, -1), K5, K6 - 1);
+  own.rect('door_fl:glass', gi(X.doorFront, 1), gi(X.doorSplit, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
+  own.rect('door_rr:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), K5, K6 - 1);
+  own.rect('door_rl:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
   // бамперы поверх всего
   own.rect('bumper_f', 0, grid.idx(X.bumperFront), 0, LOOP_N);
   own.rect('bumper_r', grid.idx(X.bumperRear), grid.rows - 1, 0, LOOP_N);
@@ -402,7 +402,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     ] as [string, number][]) {
       const c = contentOf.get(zone)!;
       const hy = 0.86;
-      const hm = new Mesh(box(0.15, 0.028, 0.03, 0.01), mats.trim());
+      const hm = new Mesh(box(0.15, 0.028, 0.03, 0.01), bodyMat());
       hm.position.set(xc, hy, sd * (sideZ(xc, hy) + 0.006));
       hm.userData.zone = zone;
       c.add(hm);
@@ -427,20 +427,65 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     c.add(mirror);
     b.shell.push(mBody, mGlass, stalk);
   }
+  // окантовка колёсных арок (чёрный пластик) — кромка вдоль выреза
+  for (const sd of [1, -1] as const) {
+    for (const [zone, ax] of [[`fender_f${sd > 0 ? 'r' : 'l'}`, spec.frontAxleX], [`quarter_r${sd > 0 ? 'r' : 'l'}`, spec.rearAxleX]] as [string, number][]) {
+      // арка заходит на заднюю дверь (BMW) — кромка на стыке панелей выглядит рваной, пропускаем
+      if (zone.startsWith('quarter') && ax + spec.archR > X.doorRear + 0.15) continue;
+      const R2 = spec.archR + 0.004;
+      const pts: Vector3[] = [];
+      for (let k = 0; k <= 24; k++) {
+        const t = (k / 24) * Math.PI;
+        const px = ax + Math.cos(t) * R2;
+        const py = spec.wheelR + Math.sin(t) * R2;
+        pts.push(new Vector3(px, py, sd * (sideZ(px, py) + 0.003)));
+      }
+      const flare = new Mesh(new TubeGeometry(new CatmullRomCurve3(pts), 40, 0.011, 6, false), mats.trim());
+      flare.userData.zone = zone;
+      contentOf.get(zone)!.add(flare);
+      b.shell.push(flare);
+    }
+  }
   {
     // решётка и воздухозаборники, номерной знак
     const c = contentOf.get('bumper_f')!;
     const xf = spec.xFront;
-    const grilles: readonly (readonly [number, number, number, number])[] =
-      spec.grille === 'kidney'
-        ? [[0.21, 0.15, 0.6, 0.125], [0.21, 0.15, 0.6, -0.125], [0.9, 0.08, 0.4, 0]]
-        : [[0.78, 0.13, 0.58, 0], [0.9, 0.09, 0.4, 0]];
-    for (const [w, h, y, z] of grilles) {
-      const m = new Mesh(box(0.03, h, w, 0.012), mats.trim());
-      m.position.set(xf + 0.004 - 0.005, y, z);
-      m.userData.zone = 'bumper_f';
-      c.add(m);
-      b.shell.push(m);
+    if (spec.grille === 'kidney') {
+      for (const [w, h, y, z] of [[0.21, 0.15, 0.6, 0.125], [0.21, 0.15, 0.6, -0.125], [0.9, 0.08, 0.4, 0]] as const) {
+        const m = new Mesh(box(0.03, h, w, 0.012), mats.trim());
+        m.position.set(xf + 0.004 - 0.005, y, z);
+        m.userData.zone = 'bumper_f';
+        c.add(m);
+        b.shell.push(m);
+      }
+    } else {
+      // широкий шестиугольный «рот» с хромированным кантом + нижний воздухозаборник + ПТФ
+      const trap = (wTop: number, wBot: number, h: number, depth: number, mat: Material, y: number, dx: number) => {
+        const sh = new Shape([new Vector2(-wTop / 2, h / 2), new Vector2(wTop / 2, h / 2), new Vector2(wBot / 2, -h / 2), new Vector2(-wBot / 2, -h / 2)]);
+        const g = new ExtrudeGeometry(sh, { depth, bevelEnabled: false });
+        g.rotateY(Math.PI / 2);
+        const m = new Mesh(g, mat);
+        m.position.set(xf + dx, y, 0);
+        m.userData.zone = 'bumper_f';
+        c.add(m);
+        b.shell.push(m);
+      };
+      trap(0.9, 0.7, 0.135, 0.03, mats.chrome(), 0.615, -0.022);
+      trap(0.86, 0.67, 0.108, 0.036, mats.trim(), 0.615, -0.02);
+      trap(0.84, 0.7, 0.078, 0.034, mats.trim(), 0.335, -0.02);
+      for (const z of [-0.52, 0.52]) {
+        const rim = new Mesh(new CylinderGeometry(0.048, 0.048, 0.03, 20), mats.chrome());
+        rim.rotation.z = Math.PI / 2;
+        rim.position.set(xf - 0.006, 0.335, z);
+        const lens = new Mesh(new CylinderGeometry(0.036, 0.036, 0.034, 20), mats.lightF());
+        lens.rotation.z = Math.PI / 2;
+        lens.position.set(xf - 0.004, 0.335, z);
+        for (const m of [rim, lens]) {
+          m.userData.zone = 'bumper_f';
+          c.add(m);
+          b.shell.push(m);
+        }
+      }
     }
     const plate = new Mesh(box(0.012, 0.115, 0.52, 0.004), mats.plate());
     plate.position.set(xf + 0.012, 0.47, 0);

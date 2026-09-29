@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { PNG_16, createCar, modelReady, openTab } from './helpers';
+import { PNG_16, createCar, modelReady, openDataDialog, openTab } from './helpers';
 
 test('дефект на кузове: отметить на модели → выполнить → журнал → переживает перезагрузку', async ({ page }) => {
   await createCar(page, { name: 'E2E Solaris', mileage: '50000' });
@@ -70,7 +70,7 @@ test('фото и чеки: прикрепить к дефекту, открыт
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Закрыть', exact: true }).last()).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(page);
   const dl = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Скачать JSON' }).click();
   const file = await dl;
@@ -82,7 +82,9 @@ test('фото и чеки: прикрепить к дефекту, открыт
 test('BMW 116i: другая модель, другие узлы (задняя дверь хэтча), регламент подставлен', async ({ page }) => {
   await createCar(page, { name: 'E2E BMW', model: 'hatch-bmw116i' });
   await modelReady(page);
-  await expect(page.locator('.open-bar')).toContainText(/Задняя дверь|Багажн|Крышка/);
+  await page.getByRole('button', { name: 'Открыть двери, капот, багажник' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Задняя дверь' })).toBeVisible();
+  await page.keyboard.press('Escape');
   await openTab(page, 'ТО');
   await expect(page.locator('.item').first()).toBeVisible();
   await expect(page.locator('.item', { hasText: /масл/i }).first()).toBeVisible();

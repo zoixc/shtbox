@@ -14,10 +14,18 @@ export async function createCar(page: Page, o: { name?: string; model?: string; 
   await expect(page.locator('.viewer-host canvas')).toBeVisible();
 }
 
-/** Ждём, пока 3D-модель загрузится (появляются кнопки «Открыть»). */
+/** Ждём, пока 3D-модель загрузится (появляется панель «Вид / Открыть»). */
 export async function modelReady(page: Page) {
-  await expect(page.locator('.open-bar .chip-btn').first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('button', { name: 'Ракурс камеры' })).toBeVisible({ timeout: 60_000 });
 }
+
+/** Меню ☰ → пункт. */
+export async function menu(page: Page, item: string | RegExp) {
+  await page.getByRole('button', { name: 'Меню', exact: true }).click();
+  await page.getByRole('menuitem', { name: item }).click();
+}
+
+export const openDataDialog = (page: Page) => menu(page, /Данные, синхронизация/);
 
 export const openTab = (page: Page, name: string) => page.locator('.tabs .tab, .tab').filter({ hasText: name }).first().click();
 

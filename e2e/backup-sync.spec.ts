@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { createCar, modelReady, openTab } from './helpers';
+import { createCar, modelReady, openDataDialog, openTab } from './helpers';
 
 test('зашифрованная копия: скачать → не содержит открытых данных → импорт по паролю', async ({ page }) => {
   await createCar(page, { name: 'Секретная-Машина' });
-  await page.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(page);
   await page.getByLabel(/зашифровать паролем/).check();
   await page.getByLabel('Пароль (от 8 символов)').fill('correct horse');
   await page.getByLabel('Повторите пароль').fill('correct horse');
@@ -30,7 +30,7 @@ test('синхронизация двух устройств с шифрован
   const ctxA = await browser.newContext({ locale: 'ru-RU' });
   const a = await ctxA.newPage();
   await createCar(a, { name: 'Общая машина', mileage: '12345' });
-  await a.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(a);
   await a.getByRole('button', { name: 'Включить синхронизацию' }).click();
   if (await a.getByRole('button', { name: 'Показать' }).isVisible()) await a.getByRole('button', { name: 'Показать' }).click();
   const key = (await a.locator('.sync-key code').innerText()).trim();
@@ -52,7 +52,7 @@ test('синхронизация двух устройств с шифрован
   await expect(b.getByRole('dialog', { name: /Новый автомобиль/ })).toBeVisible();
   await b.getByLabel('Название').fill('Локальная B');
   await b.getByRole('button', { name: 'Создать' }).click();
-  await b.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(b);
   await b.getByRole('button', { name: /Подключить это устройство/ }).click();
   await b.getByLabel('Ключ синхронизации').fill(key);
   await b.getByRole('button', { name: 'Подключить', exact: true }).click();
@@ -65,7 +65,7 @@ test('синхронизация двух устройств с шифрован
   const ctxC = await browser.newContext({ locale: 'ru-RU' });
   const c = await ctxC.newPage();
   await createCar(c, { name: 'Чужак' });
-  await c.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(c);
   await c.getByRole('button', { name: /Подключить это устройство/ }).click();
   await c.getByLabel('Ключ синхронизации').fill('AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA');
   await c.getByRole('button', { name: 'Подключить', exact: true }).click();
@@ -97,7 +97,7 @@ test('напоминания о ТО: уведомление приходит д
   await page.getByLabel('Последний раз: пробег').fill('10000');
   await page.getByRole('button', { name: 'Сохранить' }).click();
 
-  await page.getByRole('button', { name: 'Данные' }).click();
+  await openDataDialog(page);
   await page.getByLabel(/уведомлять о просроченном/).click();
   await expect(page.getByLabel(/уведомлять о просроченном/)).toBeChecked();
   const shown = () => page.evaluate(() => JSON.parse(localStorage.getItem('e2e.notes') ?? '[]') as string[]);
