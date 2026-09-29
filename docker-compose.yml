@@ -1,0 +1,67 @@
+services:
+  shtbox:
+    build: .
+    image: shtbox:latest
+    container_name: shtbox
+    restart: unless-stopped
+    # только localhost; наружу публикуйте через TLS-прокси (Caddy/Traefik/nginx)
+    ports:
+      - "127.0.0.1:${SHTBOX_PORT:-8080}:8080"
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.5
+    ulimits:
+      nofile: { soft: 2048, hard: 2048 }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+  # Необязательный сервер синхронизации (хранит только зашифрованные данные):
+  #   docker compose --profile sync up -d --build
+  sync:
+    profiles: ["sync"]
+    build: ./server
+    image: shtbox-sync:latest
+    container_name: shtbox-sync
+    restart: unless-stopped
+    # порт наружу не публикуется: доступ только через nginx (/sync/v1/) из внутренней сети compose
+    expose: ["8081"]
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777,noexec,nosuid,nodev
+    volumes:
+      - sync-data:/data
+    environment:
+      TRUST_PROXY: "1"
+      MAX_BYTES: "26214400"   # 25 МБ на хранилище
+      MAX_ENTRIES: "200"      # максимум хранилищ на сервере
+      # если SYNC_INVITE задан (в .env или окружении), создавать новые хранилища можно только с этим кодом (заголовок X-Invite)
+      INVITE: "${SYNC_INVITE:-}"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+volumes:
+  sync-data:

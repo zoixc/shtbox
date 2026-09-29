@@ -1,0 +1,35 @@
+{
+  "name": "shtbox",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Локальное приложение для учёта поломок и обслуживания автомобиля с 3D-схемой",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "prepare:bmw": "node scripts/prepare-bmw116i.mjs",
+    "import:model": "node scripts/import-model.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@preact/signals": "^2.0.0",
+    "meshoptimizer": "^1.3.0",
+    "preact": "^10.26.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@preact/preset-vite": "^2.10.0",
+    "@types/node": "^22.20.4",
+    "@types/three": "^0.180.0",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "vitest": "^5.0.2"
+  }
+}

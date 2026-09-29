@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+.vscode
+docs
+*.log
+.env*
+Dockerfile
+docker-compose.yml
+.dockerignore
+server/Dockerfile
+src/models/*.glb
+scripts
