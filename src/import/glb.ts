@@ -4,7 +4,16 @@
  */
 import { Document, WebIO } from '@gltf-transform/core';
 import type { Mesh as GMesh, Node as GNode, Texture as GTexture, TypedArray } from '@gltf-transform/core';
-import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/extensions';
+import {
+  EXTMeshoptCompression,
+  KHRDracoMeshCompression,
+  KHRMeshQuantization,
+  KHRTextureBasisu,
+  KHRTextureTransform,
+} from '@gltf-transform/extensions';
+import type { Transform } from '@gltf-transform/extensions';
+import { decodeDracoGlb, hasDraco } from './draco';
+import { KTX2_MAX_EDGE, ktx2ToPng } from './ktx2';
 import { MeshoptDecoder } from 'meshoptimizer/decoder';
 import { joinGlb, splitGlb } from './container';
 import type { Json } from './container';
@@ -36,15 +45,20 @@ const HANDLED_MATERIAL_EXTENSIONS = new Set(['KHR_materials_pbrSpecularGlossines
 const KNOWN_REQUIRED_EXTENSIONS = new Set([
   'EXT_meshopt_compression',
   'KHR_mesh_quantization',
+  'KHR_texture_basisu',
+  'KHR_texture_transform',
   ...HANDLED_MATERIAL_EXTENSIONS,
 ]);
 const SUPPORTED_TEXTURE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+/** KTX2 распаковывается в PNG: в пакете и в просмотрщике остаются обычные текстуры. */
+const KTX2_MIME = 'image/ktx2';
 
 /** Приводит поддержанные legacy-материалы к metal-rough, не копируя BIN-блок GLB без необходимости. */
 function sanitize(json: Json, warnings: Set<string>): boolean {
   const used = new Set([...(json.extensionsUsed ?? []), ...(json.extensionsRequired ?? [])]);
   if (used.has('KHR_draco_mesh_compression')) {
-    throw new Error('GLB использует Draco-сжатие геометрии, которое не поддерживает импортёр. Пересохраните модель без Draco.');
+    // Сюда попасть нельзя: `readModel` распаковывает Draco до `sanitize`. Сообщение — на случай прямых вызовов.
+    throw new Error('Draco-геометрия не была распакована перед разбором (внутренняя ошибка импорта).');
   }
   const unsupportedRequired = (json.extensionsRequired ?? []).filter((extension) => !KNOWN_REQUIRED_EXTENSIONS.has(extension));
   if (unsupportedRequired.length) {
@@ -63,6 +77,28 @@ function sanitize(json: Json, warnings: Set<string>): boolean {
   }
 
   let changed = false;
+  // Часть экспортёров забывает перечислить расширения в extensionsUsed. Без записи в списке
+  // glTF Transform не увидит трансформ UV и не прочитает Basis-текстуру, поэтому чиним список здесь.
+  const usedList = new Set(json.extensionsUsed ?? []);
+  const markUsed = (name: string) => {
+    if (usedList.has(name)) return;
+    usedList.add(name);
+    json.extensionsUsed = [...usedList];
+    changed = true;
+  };
+  const hasTransform = (json.materials ?? []).some((material) => {
+    const pbr = material.pbrMetallicRoughness as { baseColorTexture?: { extensions?: Record<string, unknown> } } | undefined;
+    if (pbr?.baseColorTexture?.extensions?.KHR_texture_transform) return true;
+    const ext = (material.extensions ?? {}) as Record<string, { diffuseTexture?: { extensions?: Record<string, unknown> } } | undefined>;
+    return !!ext.KHR_materials_pbrSpecularGlossiness?.diffuseTexture?.extensions?.KHR_texture_transform;
+  });
+  if (hasTransform) markUsed('KHR_texture_transform');
+  const hasBasisu = (json.images ?? []).some((image) => {
+    const mime = (image as { mimeType?: string }).mimeType;
+    return typeof mime === 'string' && mime.toLowerCase() === 'image/ktx2';
+  });
+  if (hasBasisu) markUsed('KHR_texture_basisu');
+
   for (const material of json.materials ?? []) {
     const ext = (material.extensions ?? {}) as Record<string, Record<string, unknown>>;
     const unhandled = Object.keys(ext).filter((name) => !HANDLED_MATERIAL_EXTENSIONS.has(name));
@@ -126,6 +162,27 @@ function determinant3(m: M4): number {
   return m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
 }
 
+/**
+ * `KHR_texture_transform`: сдвиг, поворот и масштаб набора UV. При импорте трансформ «запекается»
+ * в координаты (значения остаются теми же, что видит GPU), поэтому текстура совпадает с исходником.
+ */
+function applyTextureTransform(uv: Float32Array, t: Transform): void {
+  const [sx, sy] = t.getScale();
+  const [ox, oy] = t.getOffset();
+  const r = t.getRotation();
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  // Матрица «сдвиг × поворот × масштаб» из спецификации KHR_texture_transform.
+  const m00 = sx * cos, m01 = -sy * sin;
+  const m10 = sx * sin, m11 = sy * cos;
+  for (let i = 0; i < uv.length; i += 2) {
+    const u = uv[i];
+    const v = uv[i + 1];
+    uv[i] = m00 * u + m01 * v + ox;
+    uv[i + 1] = m10 * u + m11 * v + oy;
+  }
+}
+
 export interface ReadResult {
   parts: RawPart[];
   tris: number;
@@ -152,9 +209,8 @@ function inspectJson(json: Json, warnings: Set<string>): void {
   if (meshes?.some((mesh) => mesh.primitives?.some((primitive) => (primitive.targets?.length ?? 0) > 0))) {
     warnings.add('Morph targets не импортируются: используется базовая форма меша.');
   }
-  if (json.extensionsUsed?.includes('KHR_texture_transform') || json.extensionsRequired?.includes('KHR_texture_transform')) {
-    warnings.add('KHR_texture_transform не применяется; UV-смещение/поворот текстуры может отличаться от исходника.');
-  }
+  // KHR_texture_transform не предупреждение: сдвиг/поворот/масштаб UV применяются к координатам
+  // при чтении (см. `textureTransformOf`), поэтому текстура совпадает с исходником.
 }
 
 async function computeNormals(
@@ -190,29 +246,30 @@ async function computeNormals(
   return nor;
 }
 
-function hasBaseColorTextureTransform(json: Json): boolean {
-  return (json.materials ?? []).some((material) => {
-    const pbr = material.pbrMetallicRoughness as { baseColorTexture?: { extensions?: Record<string, unknown> } } | undefined;
-    return !!pbr?.baseColorTexture?.extensions?.KHR_texture_transform;
-  });
-}
-
 export async function readModel(data: Uint8Array, avgColor?: AvgColor, options: ReadOptions = {}): Promise<ReadResult> {
   if (data.byteLength > LIMITS.fileBytes) throw new Error(`Файл больше ${LIMITS.fileBytes >> 20} МБ`);
   const warnings = new Set<string>();
-  const { json, bin } = splitGlb(data);
+  let { json, bin } = splitGlb(data);
+  if (hasDraco(json)) {
+    // Draco расширяется до обычного GLB, дальше путь чтения общий (в том числе для CLI и тестов).
+    options.onProgress?.('Распаковка Draco', 0);
+    const plain = await decodeDracoGlb(data);
+    ({ json, bin } = splitGlb(plain));
+    data = plain;
+    warnings.add('Геометрия была сжата Draco и распакована при импорте.');
+  }
   inspectJson(json, warnings);
   const preservedCredits = creditsFromJson(json);
   const changedJson = sanitize(json, warnings);
-  const textureTransformOmitted = options.preserveTextures === true && hasBaseColorTextureTransform(json);
-  if (textureTransformOmitted) warnings.add('Base-color текстуры для этого GLB не сохранены: KHR_texture_transform не применяется к UV-координатам.');
   const hasMeshopt = json.extensionsUsed?.includes('EXT_meshopt_compression') || json.extensionsRequired?.includes('EXT_meshopt_compression');
-  const io = new WebIO().registerExtensions([EXTMeshoptCompression, KHRMeshQuantization]).registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
+  const io = new WebIO()
+    .registerExtensions([EXTMeshoptCompression, KHRMeshQuantization, KHRTextureTransform, KHRTextureBasisu, KHRDracoMeshCompression])
+    .registerDependencies({ 'meshopt.decoder': MeshoptDecoder });
   if (hasMeshopt) await MeshoptDecoder.ready;
   // Most GLBs need no metadata rewrite. Read the original Uint8Array to avoid a second full-size BIN copy.
   const doc = await io.readBinary(changedJson ? joinGlb(json, bin) : data);
   const scenes = doc.getRoot().listScenes();
-  const preserveTextures = options.preserveTextures === true && !textureTransformOmitted;
+  const preserveTextures = options.preserveTextures === true;
 
   let totalWork = 0;
   const countWork = (node: GNode) => {
@@ -262,23 +319,40 @@ export async function readModel(data: Uint8Array, avgColor?: AvgColor, options: 
   const skippedPrimitiveModes = new Map<number, number>();
   const parts: RawPart[] = [];
   let tris = 0;
-  const getTextureSource = (texture: GTexture): RawTexture | undefined => {
+  const failTexture = (texture: GTexture, reason: string): undefined => {
+    warnings.add(`Текстура «${texture.getName() || 'без имени'}»: ${reason}. Она сведена к цвету материала.`);
+    textureCache.set(texture, null);
+    return undefined;
+  };
+  const getTextureSource = async (texture: GTexture): Promise<RawTexture | undefined> => {
     if (textureCache.has(texture)) return textureCache.get(texture) ?? undefined;
     const image = texture.getImage();
     const mime = texture.getMimeType().toLowerCase();
-    if (!image || !SUPPORTED_TEXTURE_MIME.has(mime)) {
-      warnings.add(`Текстура «${texture.getName() || 'без имени'}» имеет неподдерживаемый формат ${mime || '(MIME не указан)'}; она сведена к цвету материала.`);
-      textureCache.set(texture, null);
-      return undefined;
+    if (!image) return failTexture(texture, 'нет данных изображения');
+    let bytes: Uint8Array = image;
+    let outMime = mime;
+    if (mime === KTX2_MIME) {
+      // KTX2/BasisU хранит текстуру в сжатом виде: распаковываем её в PNG на импорте.
+      try {
+        const decoded = await ktx2ToPng(image);
+        if (!decoded) return failTexture(texture, `KTX2 больше ${KTX2_MAX_EDGE}×${KTX2_MAX_EDGE} пикселей — распаковка пропущена`);
+        bytes = decoded.png;
+        outMime = 'image/png';
+        warnings.add(`KTX2-текстура «${texture.getName() || 'без имени'}» распакована в PNG (${decoded.width}×${decoded.height}).`);
+      } catch (error) {
+        return failTexture(texture, `не удалось распаковать KTX2 (${error instanceof Error ? error.message : String(error)})`);
+      }
+    } else if (!SUPPORTED_TEXTURE_MIME.has(mime)) {
+      return failTexture(texture, `неподдерживаемый формат ${mime || '(MIME не указан)'}`);
     }
-    if (preservedTextureBytes + image.byteLength > LIMITS.preservedTextureBytes) {
+    if (preservedTextureBytes + bytes.byteLength > LIMITS.preservedTextureBytes) {
       warnings.add(`Суммарный размер сохраняемых текстур превышает ${LIMITS.preservedTextureBytes >> 20} МиБ; лишние текстуры сведены к цвету материала.`);
       textureCache.set(texture, null);
       return undefined;
     }
-    const source: RawTexture = { id: `texture-${textureId++}`, mime, image };
+    const source: RawTexture = { id: `texture-${textureId++}`, mime: outMime, image: bytes };
     textureCache.set(texture, source);
-    preservedTextureBytes += image.byteLength;
+    preservedTextureBytes += bytes.byteLength;
     return source;
   };
 
@@ -377,15 +451,18 @@ export async function readModel(data: Uint8Array, avgColor?: AvgColor, options: 
         const texture = material?.getBaseColorTexture() ?? null;
         const textureInfo = material?.getBaseColorTextureInfo() ?? null;
         const texCoordIndex = textureInfo?.getTexCoord() ?? 0;
-        const uvAccessor = primitive.getAttribute(`TEXCOORD_${texCoordIndex}`);
+        // KHR_texture_transform может и переопределить набор UV, и задать матрицу к нему
+        const transform = textureInfo?.getExtension<Transform>('KHR_texture_transform') ?? null;
+        const uvSet = transform?.getTexCoord() ?? texCoordIndex;
+        const uvAccessor = primitive.getAttribute(`TEXCOORD_${uvSet}`);
         if (texture && !preserveTextures) droppedTexture = true;
         let textureSource: RawTexture | undefined;
         if (preserveTextures && texture) {
-          if (!uvAccessor) warnings.add(`Для текстуры «${texture.getName() || 'без имени'}» не найден UV-канал ${texCoordIndex}; текстура не перенесена.`);
-          else textureSource = getTextureSource(texture);
+          if (!uvAccessor) warnings.add(`Для текстуры «${texture.getName() || 'без имени'}» не найден UV-канал ${uvSet}; текстура не перенесена.`);
+          else textureSource = await getTextureSource(texture);
         }
         for (const semantic of semantics) {
-          if (semantic !== 'POSITION' && semantic !== 'NORMAL' && !(textureSource && semantic === `TEXCOORD_${texCoordIndex}`)) {
+          if (semantic !== 'POSITION' && semantic !== 'NORMAL' && !(textureSource && semantic === `TEXCOORD_${uvSet}`)) {
             unsupportedAttributes.add(semantic);
           }
         }
@@ -403,6 +480,7 @@ export async function readModel(data: Uint8Array, avgColor?: AvgColor, options: 
             }
             await advance(end - start);
           }
+          if (transform) applyTextureTransform(uv, transform);
         }
         if (
           material?.getEmissiveTexture() || material?.getNormalTexture() || material?.getMetallicRoughnessTexture() || material?.getOcclusionTexture()

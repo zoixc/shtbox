@@ -27,7 +27,10 @@ import {
   Vector3,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { createPaintMaterial, enhanceMaterial, setArch } from '../../view3d/paintMaterial';
+import { createPaintMaterial, enhanceMaterial, setArch, setPaintFinish } from '../../view3d/paintMaterial';
+import type { PaintFinish } from '../../view3d/paintMaterial';
+import { collectWindows, mergeWindows } from '../../view3d/window';
+import type { WindowControl } from '../../view3d/window';
 import type { ModelRig, OpenableRig } from '../types';
 import { BodyLoft, K_IDX, LOOP_N, Ownership, buildGrid, buildStations, extractPanel } from './loft';
 import type { BodySpec } from './loft';
@@ -502,7 +505,7 @@ function buildBrake(b: Builder, spec: SedanSpec, zone: string, x: number, side: 
 }
 
 // ---------- основной билдер ----------
-export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
+export function buildSedan(spec: SedanSpec, paintColor: string, paintFinish: PaintFinish = 'gloss'): ModelRig {
   const b = new Builder();
   const loft = new BodyLoft(spec.body);
   const X = spec.x;
@@ -564,6 +567,8 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   own.rect('lights_r', lr0, lr1, LOOP_N - (K5 + 2), LOOP_N - (K_IDX[3] + 1));
 
   const paintMats: MeshPhysicalMaterial[] = [];
+  /** опускаемые стёкла дверей: узел → створка */
+  const windows = new Map<string, WindowControl>();
   const bodyTint: Material[] = [];
 
   // ---- окрашиваемые панели
@@ -609,7 +614,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     const glassOwner = `${d.zone}:glass`;
     const p = extractPanel(grid, own, d.zone, (o) => o === d.zone || o === glassOwner);
     if (p) {
-      const pm = createPaintMaterial(paintColor);
+      const pm = createPaintMaterial(paintColor, paintFinish);
       paintMats.push(pm);
       const mesh = b.mesh(p.geometry, pm, content, d.zone);
       mesh.name = d.zone;
@@ -629,6 +634,13 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     if (g) {
       const gm = b.mesh(g.geometry, mats.glass(), content, d.zone);
       b.shell.push(gm);
+      // опускаются только стёкла дверей: стекло капота/задней двери-хэтча едет вместе с панелью
+      if (d.zone.startsWith('door_')) {
+        // пояс — низ панели стекла: ниже него при опускании ничего не показываем
+        if (!gm.geometry.boundingBox) gm.geometry.computeBoundingBox();
+        const belt = gm.geometry.boundingBox?.min.y ?? 0;
+        windows.set(d.zone, mergeWindows(d.zone, d.label ?? d.zone, collectWindows([gm], () => true, belt, d.zone, d.label ?? d.zone)));
+      }
     }
     b.anchor(d.zone, content, d.anchor, d.facing);
   }
@@ -825,7 +837,11 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     anchors: b.anchors,
     facing: b.facing,
     shell: b.shell,
+    windows,
     setColor,
+    setFinish: (finish) => {
+      for (const m of paintMats) setPaintFinish(m, finish);
+    },
     bounds: {
       center: [e81Style ? (spec.xFront + spec.xRear) / 2 : 0, e81Style ? 0.7105 : 0.7, 0],
       radius: solarisStyle || e81Style ? 2.55 : 3.2,

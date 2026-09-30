@@ -1,7 +1,8 @@
 import type { Json } from './container';
 
 export const PRESERVED_TEXTURE_LIMIT = 32 * 1024 * 1024;
-const supportedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
+// KTX2/BasisU на импорте распаковывается в PNG; в оценке учитываем исходный размер файла.
+const supportedMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/ktx2']);
 
 type JsonObject = Record<string, unknown>;
 const object = (value: unknown): JsonObject | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;
@@ -33,11 +34,6 @@ export function estimatePreservedTextures(json: Json, limit = PRESERVED_TEXTURE_
   const images = array(json.images);
   const bufferViews = array(json.bufferViews);
   const referenced = new Set<number>();
-  let hasTextureTransform = materials.some((value) => {
-    const pbr = object(object(value)?.pbrMetallicRoughness);
-    const textureInfo = object(pbr?.baseColorTexture);
-    return !!object(textureInfo?.extensions)?.KHR_texture_transform;
-  });
 
   for (const meshValue of array(json.meshes)) {
     const mesh = object(meshValue);
@@ -49,9 +45,11 @@ export function estimatePreservedTextures(json: Json, limit = PRESERVED_TEXTURE_
       const material = object(materials[materialIndex]);
       const pbr = object(material?.pbrMetallicRoughness);
       const textureInfo = object(pbr?.baseColorTexture);
-      if (object(textureInfo?.extensions)?.KHR_texture_transform) continue;
       const textureIndex = textureInfo?.index;
-      const texCoord = typeof textureInfo?.texCoord === 'number' ? textureInfo.texCoord : 0;
+      // KHR_texture_transform can override the UV set used by the texture.
+      const transform = object(object(textureInfo?.extensions)?.KHR_texture_transform);
+      const texCoord = typeof transform?.texCoord === 'number' ? transform.texCoord
+        : typeof textureInfo?.texCoord === 'number' ? textureInfo.texCoord : 0;
       if (
         typeof textureIndex === 'number' &&
         attributes?.[`TEXCOORD_${texCoord}`] !== undefined &&
@@ -86,5 +84,5 @@ export function estimatePreservedTextures(json: Json, limit = PRESERVED_TEXTURE_
       retained++;
     }
   }
-  return hasTextureTransform ? { bytes: 0, textures: 0, omitted: 0 } : { bytes, textures: retained, omitted };
+  return { bytes, textures: retained, omitted };
 }

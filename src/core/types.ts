@@ -1,5 +1,7 @@
 /** Доменная модель. Все данные хранятся локально (IndexedDB), сервера нет. */
 
+import type { PaintFinish } from '../data/paintFinish';
+
 export type ID = string;
 /** Дата без времени в формате YYYY-MM-DD (локальная). */
 export type DateStr = string;
@@ -11,6 +13,10 @@ export interface Car {
   modelId: string;
   /** цвет кузова, #rrggbb */
   color: string;
+  /** код краски: справочный («RAL 9005») или свой («BMW 475»); свободный текст */
+  colorCode?: string;
+  /** тип покрытия; пусто — покрытие по умолчанию у модели */
+  finish?: PaintFinish;
   plate: string;
   vin: string;
   year?: number;

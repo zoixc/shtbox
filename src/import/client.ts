@@ -5,12 +5,14 @@ import type { WorkerReq, WorkerRes } from './worker';
 export interface ImportOutcome {
   glb: Uint8Array;
   profile: Profile;
-  stats: { srcTris: number; tris: number; parts: number; bytes: number };
+  stats: { srcTris: number; tris: number; parts: number; bytes: number; textures?: { before: number; after: number; converted: number; kept: number } };
   warnings: string[];
 }
 
 export interface ImportFileOptions {
   preserveTextures?: boolean;
+  /** Бюджет треугольников: меньше — легче модель, больше — точнее кузов. */
+  budget?: number;
 }
 
 type WorkerReqWithoutId = WorkerReq extends infer Request ? (Request extends { id: number } ? Omit<Request, 'id'> : never) : never;
@@ -69,7 +71,7 @@ export class ImportSession {
     progress?: (stage: string, frac: number) => void,
     options: ImportFileOptions = {},
   ): Promise<ImportOutcome> {
-    const result = await this.call({ type: 'import', data, title, hint, preserveTextures: options.preserveTextures }, [data], progress);
+    const result = await this.call({ type: 'import', data, title, hint, preserveTextures: options.preserveTextures, budget: options.budget }, [data], progress);
     return { glb: result.glb!, profile: result.profile!, stats: result.stats!, warnings: result.warnings ?? [] };
   }
 

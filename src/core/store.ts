@@ -16,7 +16,8 @@ export interface ZoneSummary {
   due: DueState;
 }
 
-export type NewCar = Pick<Car, 'name' | 'modelId'> & Partial<Pick<Car, 'color' | 'plate' | 'vin' | 'year' | 'mileage'>>;
+export type NewCar = Pick<Car, 'name' | 'modelId'> &
+  Partial<Pick<Car, 'color' | 'colorCode' | 'finish' | 'plate' | 'vin' | 'year' | 'mileage'>>;
 export type NewIssue = Pick<Issue, 'zoneId' | 'kind' | 'title'> & Partial<Pick<Issue, 'notes' | 'priority' | 'cost' | 'spot' | 'inspectionId'>>;
 export type NewTask = Pick<MaintenanceTask, 'zoneId' | 'title'> &
   Partial<Pick<MaintenanceTask, 'notes' | 'everyKm' | 'everyMonths' | 'lastDate' | 'lastKm'>>;

@@ -8,13 +8,16 @@
  *     подогнанного по размерам (см. `fit.ts`).
  */
 import { Box3, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, Object3D, Vector3 } from 'three';
-import type { Material, MeshStandardMaterial } from 'three';
+import type { Material, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
 import { histogram, makeZoner, remapZone, splitInto, SPLIT_BUDGET } from '../../import/partition';
 import type { Soup } from '../../import/partition';
 import { xform } from '../../import/frame';
 import { facingOf, zonesFor } from '../../import/zoneset';
 import type { Profile, Vec3 } from '../../import/types';
-import { createPaintMaterial, enhanceMaterial } from '../../view3d/paintMaterial';
+import { createPaintMaterial, enhanceMaterial, setPaintFinish } from '../../view3d/paintMaterial';
+import type { PaintFinish } from '../../view3d/paintMaterial';
+import { collectWindows, mergeWindows } from '../../view3d/window';
+import type { WindowControl } from '../../view3d/window';
 import type { ModelRig, OpenableRig, ZoneDef } from '../types';
 
 interface Acc {
@@ -93,7 +96,7 @@ export interface ImportedParts {
 }
 
 /** Разбирает детали по узлам. Без процедурной начинки — её добавляет `createImportedRig`. */
-export function buildImportedParts(scene: Object3D, pr: Profile, color: string): ImportedParts {
+export function buildImportedParts(scene: Object3D, pr: Profile, color: string, finish?: PaintFinish): ImportedParts {
   const zones = zonesFor(pr.body, pr.layout);
   const zdef = new Map(zones.map((z) => [z.id, z]));
   const zoner = makeZoner(pr);
@@ -102,6 +105,8 @@ export function buildImportedParts(scene: Object3D, pr: Profile, color: string):
   const budget = { left: SPLIT_BUDGET };
   // Модельные контуры требуют более мелких треугольников у линии разреза, чем общий plane-cut.
   const cutResolution = pr.panelRegions?.length ? 0.01 : 0.025;
+  /** материалы, которыми нарисовано стекло: из них делаются опускаемые створки */
+  const glassMats = new Set<Material>();
   const valid = (z: string | undefined): z is string => !!z && zdef.has(remapZone(z, pr.body));
 
   scene.updateMatrixWorld(true);
@@ -118,6 +123,7 @@ export function buildImportedParts(scene: Object3D, pr: Profile, color: string):
     const mat = mesh.material as Material;
     const isPaint = info.k === 'paint' && pr.paint.includes(info.m);
     const key = isPaint ? 'paint' : mat;
+    if (info.k === 'glass' && !isPaint) glassMats.add(mat);
     const put = (zone: string) => remapZone(zone, pr.body);
 
     if (valid(info.z)) {
@@ -159,10 +165,10 @@ export function buildImportedParts(scene: Object3D, pr: Profile, color: string):
       }
     }
   }
-  return assemble(acc, pr, zones, color);
+  return assemble(acc, pr, zones, color, glassMats, finish);
 }
 
-function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): ImportedParts {
+function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string, glassMats: ReadonlySet<Material>, finish?: PaintFinish): ImportedParts {
   const zdef = new Map(zones.map((z) => [z.id, z]));
   const root = new Group();
   const paint = new Map<string, Mesh>();
@@ -171,7 +177,8 @@ function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): Impor
   const anchors = new Map<string, Object3D>();
   const facing = new Map<string, Vec3>();
   const shell: Object3D[] = [];
-  const paintMats: MeshStandardMaterial[] = [];
+  const paintMats: MeshPhysicalMaterial[] = [];
+  const windows = new Map<string, WindowControl>();
   const covered = new Set<string>();
   const matCache = new Map<Material, Material>();
 
@@ -221,10 +228,14 @@ function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): Impor
         angle = side * (zone.startsWith('door_f') ? 1.15 : 1.05);
       }
       if (ov) {
+        // ручные правки из мастера: точка шарнира, ось и угол открытия
         if (ov.x !== undefined) hinge.x = ov.x;
         if (ov.y !== undefined) hinge.y = ov.y;
         if (ov.z !== undefined) hinge.z = ov.z;
         if (ov.angle !== undefined) angle = ov.angle;
+        if (ov.axis === 'x') axis = new Vector3(1, 0, 0);
+        else if (ov.axis === 'y') axis = new Vector3(0, 1, 0);
+        else if (ov.axis === 'z') axis = new Vector3(0, 0, 1);
       }
       pivot.position.copy(hinge);
       content.position.copy(hinge).multiplyScalar(-1);
@@ -236,11 +247,17 @@ function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): Impor
     const meshes: Mesh[] = [];
     for (const [key, s] of byMat) {
       let material: Material;
+      // стекло двери — отдельный материал на каждую створку: у маски стекла свои uniform-ы
+      const isWindow = key !== 'paint' && glassMats.has(key) && zone.startsWith('door_') && def.openable === true;
       if (key === 'paint') {
-        const pm = createPaintMaterial(color, 'satin');
+        const pm = createPaintMaterial(color, finish ?? pr.finish ?? 'satin');
         pm.side = DoubleSide;
         paintMats.push(pm);
         material = pm;
+      } else if (isWindow) {
+        material = enhanceMaterial((key as Material).clone());
+        (material as MeshStandardMaterial).side = DoubleSide;
+        if (material.transparent || material.opacity < 1) material.depthWrite = false;
       } else {
         let m = matCache.get(key);
         if (!m) {
@@ -260,6 +277,10 @@ function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): Impor
       content.add(mesh);
       meshes.push(mesh);
       if (def.layer === 'body') shell.push(mesh);
+      if (isWindow) {
+        const list = collectWindows([mesh], () => true, pr.lines.belt, zone, def.label);
+        if (list.length) windows.set(zone, mergeWindows(zone, def.label, [...(windows.get(zone) ? [windows.get(zone)!] : []), ...list]));
+      }
     }
     pick.set(zone, meshes);
     covered.add(zone);
@@ -286,8 +307,12 @@ function assemble(acc: Acc, pr: Profile, zones: ZoneDef[], color: string): Impor
     anchors,
     facing,
     shell,
+    windows,
     setColor: (hex) => {
       for (const m of paintMats) m.color.set(new Color(hex));
+    },
+    setFinish: (next) => {
+      for (const m of paintMats) setPaintFinish(m, next);
     },
     bounds: { center: [center.x, center.y, center.z], radius: Math.max(2.4, box.getSize(new Vector3()).length() / 2) },
     dispose: () => {

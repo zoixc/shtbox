@@ -1,5 +1,7 @@
-import { KINDS, MAX_PARTS } from './types';
-import type { BodyType, DataConfidence, DataProvenance, Dims, Kind, Lines, PanelRegion, PartInfo, Profile, ProfileProvenance, Vec3 } from './types';
+import { PAINT_FINISHES } from '../view3d/paintMaterial';
+import type { PaintFinish } from '../view3d/paintMaterial';
+import { INTERIOR_MODES, KINDS, MAX_PARTS } from './types';
+import type { BodyType, DataConfidence, DataProvenance, Dims, HingeOverride, InteriorMode, Kind, Lines, PanelRegion, PartInfo, Profile, ProfileProvenance, Vec3 } from './types';
 
 const num = (v: unknown, lo = -1000, hi = 1000): number => {
   if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) throw new Error('bad number');
@@ -51,6 +53,7 @@ export function parseProfile(raw: unknown): Profile {
       }
       if (p.z !== undefined) parts[id].z = str(p.z, 40);
       if (p.u) parts[id].u = 1;
+      if (p.b) parts[id].b = 1;
     }
     const profile: Profile = {
       v: 1, title: str(o.title), body, layout: o.layout, driver: o.driver, frame, dims, lines, paint, parts,
@@ -112,10 +115,34 @@ export function parseProfile(raw: unknown): Profile {
     if (h && typeof h === 'object') {
       profile.hinges = {};
       for (const [z, v] of Object.entries(h).slice(0, 12)) {
-        const hv: Record<string, number> = {};
-        for (const k of ['x', 'y', 'z', 'angle']) if (v[k] !== undefined) hv[k] = num(v[k], -100, 100);
+        const hv: HingeOverride = {};
+        for (const k of ['x', 'y', 'z', 'angle'] as const) if (v[k] !== undefined) hv[k] = num(v[k], -100, 100);
+        if (v.axis !== undefined) {
+          if (v.axis !== 'x' && v.axis !== 'y' && v.axis !== 'z') throw new Error('hinge axis');
+          hv.axis = v.axis;
+        }
         profile.hinges[str(z, 40)] = hv;
       }
+    }
+    if (o.color !== undefined) {
+      if (typeof o.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(o.color)) throw new Error('color');
+      profile.color = o.color.toLowerCase();
+    }
+    if (o.colorCode !== undefined) {
+      if (typeof o.colorCode !== 'string' || o.colorCode.length > 24) throw new Error('colorCode');
+      profile.colorCode = o.colorCode.trim();
+    }
+    if (o.finish !== undefined) {
+      if (typeof o.finish !== 'string' || !PAINT_FINISHES.includes(o.finish as (typeof PAINT_FINISHES)[number])) throw new Error('finish');
+      profile.finish = o.finish as PaintFinish;
+    }
+    if (o.interior !== undefined) {
+      if (typeof o.interior !== 'string' || !INTERIOR_MODES.includes(o.interior as InteriorMode)) throw new Error('interior mode');
+      profile.interior = o.interior as InteriorMode;
+    }
+    if (o.autoNotes !== undefined) {
+      if (!Array.isArray(o.autoNotes) || o.autoNotes.length > 8) throw new Error('auto notes');
+      profile.autoNotes = o.autoNotes.map((n) => str(n, 200));
     }
     return profile;
   } catch (e) {

@@ -3,6 +3,9 @@ import { Store } from './core/store';
 import { openStorage } from './core/db';
 import type { IssueKind, Spot } from './core/types';
 import type { Layer } from './models/types';
+import type { PaintFinish } from './data/paintFinish';
+import { CUSTOM_COLOR_KEY, addCustomColor, loadCustomColors, saveCustomColors } from './data/paintSearch';
+import type { CustomColor } from './data/paintSearch';
 import { getModel, hasModel } from './models/registry';
 import { loadUserModels } from './models/user';
 
@@ -12,6 +15,7 @@ export async function initStore(): Promise<Store> {
   store = new Store(await openStorage());
   await store.init();
   await loadUserModels(store.backend);
+  await loadPaintLibrary();
   // статусы ТО зависят от «сегодня»
   setInterval(() => store.refreshToday(), 60_000);
   document.addEventListener('visibilitychange', () => store.refreshToday());
@@ -56,9 +60,38 @@ export const ui = {
   sheetOpen: signal(true),
   /** временный цвет кузова (предпросмотр в диалоге автомобиля) */
   previewColor: signal<string | null>(null),
+  /** временное покрытие кузова (предпросмотр в диалоге автомобиля) */
+  previewFinish: signal<PaintFinish | null>(null),
   /** id вложения, открытого в просмотре */
   lightbox: signal<string | null>(null),
 };
+
+// ---------- библиотека цветов ----------
+
+/** Свои коды краски (BMW 475, LC9Z…): живут на устройстве и не попадают в резервные копии. */
+export const paintLibrary = signal<CustomColor[]>([]);
+
+async function loadPaintLibrary(): Promise<void> {
+  try {
+    paintLibrary.value = loadCustomColors(await store.getMeta<string>(CUSTOM_COLOR_KEY));
+  } catch {
+    paintLibrary.value = [];
+  }
+}
+
+/** Добавляет свой код краски в библиотеку (и запоминает его на устройстве). */
+export async function rememberColor(color: { code?: string; name: string; hex: string }): Promise<CustomColor | null> {
+  const before = paintLibrary.peek();
+  const next = addCustomColor(before, color);
+  paintLibrary.value = next;
+  const added = next.find((c) => !before.some((b) => b.hex === c.hex && b.name === c.name));
+  try {
+    await store.setMeta(CUSTOM_COLOR_KEY, saveCustomColors(next));
+  } catch (e) {
+    console.error(e);
+  }
+  return added ?? null;
+}
 
 let toastTimer = 0;
 export function toast(text: string, kind: 'ok' | 'err' = 'ok'): void {
@@ -116,6 +149,12 @@ export const viewerCommands: {
   view?: (preset: string) => void;
   lighting?: (preset: 'studio' | 'daylight' | 'inspection') => void;
   openable?: () => { id: string; label: string }[];
+  /** опустить/поднять все стёкла дверей (0 — подняты, 1 — опущены) */
+  setWindows?: (fraction: number) => void;
+  /** опустить/поднять одно стекло по узлу-двери */
+  setWindow?: (zone: string, fraction: number) => void;
+  /** стёкла, которые умеет опускать текущая модель */
+  windowsList?: () => { id: string; label: string }[];
 } = {};
 
 // Esc отменяет режим расстановки метки

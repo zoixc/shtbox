@@ -4,6 +4,8 @@ import { splitGlb } from './container';
 import { readModel, writePackage } from './glb';
 import type { AvgColor } from './glb';
 import { simplifyParts, triCount } from './simplify';
+import { optimizeTextures } from './texture-optimize';
+import type { TextureEncoder, TextureStats } from './texture-optimize';
 import type { Profile, RawPart } from './types';
 
 /** Автор/лицензия из метаданных исходного файла (Sketchfab кладёт их в asset.extras). */
@@ -28,6 +30,8 @@ export interface ImportOptions {
   avgColor?: AvgColor;
   hint?: AnalyzeHint;
   preserveTextures?: boolean;
+  /** Свой кодировщик текстур (тесты; по умолчанию — браузерный OffscreenCanvas). */
+  textureEncoder?: TextureEncoder | null;
   onProgress?: (stage: string, frac: number) => void;
 }
 
@@ -37,8 +41,10 @@ export interface ImportResult {
   warnings: string[];
   /** упрощённые детали (для повторного анализа без перечитывания файла) */
   parts: RawPart[];
-  stats: { srcTris: number; tris: number; parts: number; bytes: number };
+  stats: { srcTris: number; tris: number; parts: number; bytes: number; textures?: TextureStats };
 }
+
+const mib = (bytes: number): string => `${(bytes / (1024 * 1024)).toFixed(2)} МБ`;
 
 /** Полный путь «чужой GLB → пакет модели» (GLB + профиль). */
 export async function processModel(data: Uint8Array, o: ImportOptions): Promise<ImportResult> {
@@ -72,8 +78,21 @@ export async function processModel(data: Uint8Array, o: ImportOptions): Promise<
   const profile = analyze(simp, o.title, o.hint);
   const credits = o.credits ?? read.credits;
   if (credits) profile.credits = credits;
-  prog('Упаковка', 0.92);
+  prog('Текстуры', 0.9);
+  const textures = o.preserveTextures ? await optimizeTextures(simp, { encoder: o.textureEncoder }) : null;
+  if (textures?.converted) {
+    warnings.push(
+      `Текстуры цвета перекодированы (JPEG): ${mib(textures.before)} → ${mib(textures.after)}, ${textures.converted} шт.`,
+    );
+  }
+  prog('Упаковка', 0.94);
   const glb = await writePackage(simp, profile);
   prog('Готово', 1);
-  return { glb, profile, warnings: [...new Set(warnings)], parts: simp, stats: { srcTris, tris: triCount(simp), parts: simp.length, bytes: glb.byteLength } };
+  return {
+    glb,
+    profile,
+    warnings: [...new Set(warnings)],
+    parts: simp,
+    stats: { srcTris, tris: triCount(simp), parts: simp.length, bytes: glb.byteLength, ...(textures?.converted ? { textures } : {}) },
+  };
 }

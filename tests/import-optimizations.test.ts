@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Document, WebIO } from '@gltf-transform/core';
 import type { TypedArray } from '@gltf-transform/core';
 import { ImportCancelledError, ImportSession } from '../src/import/client';
-import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/extensions';
+import { EXTMeshoptCompression, KHRMeshQuantization, KHRTextureTransform } from '@gltf-transform/extensions';
 import { meshopt } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer/encoder';
 import { joinGlb, splitGlb } from '../src/import/container';
@@ -70,6 +70,29 @@ async function triangleGlb(withTexture: boolean): Promise<Uint8Array> {
   primitive.setMaterial(material);
   scene.addChild(doc.createNode('body').setMesh(doc.createMesh('body').addPrimitive(primitive)));
   return new WebIO().writeBinary(doc);
+}
+
+/** Фикстура с KHR_texture_transform: сдвиг, поворот на 90° и масштаб по осям UV. */
+async function textureTransformGlb(): Promise<Uint8Array> {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene('uv-transform');
+  const primitive = doc.createPrimitive()
+    .setAttribute('POSITION', accessor(doc, buffer, 'VEC3', new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])))
+    .setAttribute('NORMAL', accessor(doc, buffer, 'VEC3', new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1])))
+    .setAttribute('TEXCOORD_0', accessor(doc, buffer, 'VEC2', new Float32Array([0, 0, 1, 0, 0, 1])))
+    .setIndices(accessor(doc, buffer, 'SCALAR', new Uint32Array([0, 1, 2])));
+  const transform = doc.createExtension(KHRTextureTransform)
+    .createTransform()
+    .setOffset([0.5, 0.25])
+    .setScale([2, 3])
+    .setRotation(Math.PI / 2);
+  const texture = doc.createTexture('one-pixel').setMimeType('image/png').setImage(pixelPng);
+  const material = doc.createMaterial('Paint').setBaseColorTexture(texture);
+  material.getBaseColorTextureInfo()!.setExtension('KHR_texture_transform', transform);
+  primitive.setMaterial(material);
+  scene.addChild(doc.createNode('body').setMesh(doc.createMesh('body').addPrimitive(primitive)));
+  return new WebIO().registerExtensions([KHRTextureTransform]).writeBinary(doc);
 }
 
 async function manyMaterialGlb(count: number): Promise<Uint8Array> {
@@ -166,10 +189,14 @@ describe('importer resource safeguards', () => {
     const pbr = material.pbrMetallicRoughness as Record<string, unknown>;
     const textureInfo = pbr.baseColorTexture as Record<string, unknown>;
     textureInfo.extensions = { KHR_texture_transform: { offset: [0.25, 0.25] } };
-    expect(estimatePreservedTextures(transformedGlb.json)).toEqual({ bytes: 0, textures: 0, omitted: 0 });
+    // Трансформ UV не мешает сохранить текстуру: сдвиг «запекается» в координаты при чтении.
+    expect(estimatePreservedTextures(transformedGlb.json)).toEqual({ bytes: pixelPng.byteLength, textures: 1, omitted: 0 });
     const transformed = await readModel(joinGlb(transformedGlb.json, transformedGlb.bin), undefined, { preserveTextures: true });
-    expect(transformed.parts[0].texture).toBeUndefined();
-    expect(transformed.warnings.some((warning) => warning.includes('KHR_texture_transform'))).toBe(true);
+    expect(transformed.parts[0].texture?.mime).toBe('image/png');
+    expect(transformed.parts[0].uv?.slice(0, 2)).toEqual(new Float32Array([0.25, 0.25]));
+    expect(transformed.parts[0].uv?.slice(2, 4)).toEqual(new Float32Array([1.25, 0.25]));
+    expect(transformed.parts[0].uv?.slice(4, 6)).toEqual(new Float32Array([0.25, 1.25]));
+    expect(transformed.warnings.some((warning) => warning.includes('KHR_texture_transform'))).toBe(false);
 
     const defaultRead = await readModel(source);
     expect(defaultRead.parts[0].texture).toBeUndefined();
@@ -187,6 +214,15 @@ describe('importer resource safeguards', () => {
     expect(primitive.getAttribute('TEXCOORD_0')?.getCount()).toBe(3);
     expect(primitive.getMaterial()?.getBaseColorTexture()?.getMimeType()).toBe('image/png');
     expect(primitive.getMaterial()?.getBaseColorTexture()?.getImage()?.byteLength).toBeGreaterThan(0);
+  });
+
+  it('запекает KHR_texture_transform в UV при чтении', async () => {
+    const read = await readModel(await textureTransformGlb(), undefined, { preserveTextures: true });
+    const uv = read.parts[0].uv;
+    expect(uv).toBeDefined();
+    // матрица «сдвиг × поворот(90°) × масштаб(2, 3)»: u' = -3v + 0.5, v' = 2u + 0.25
+    expect(Array.from(uv!).slice(0, 6).map((value) => Number(value.toFixed(4)))).toEqual([0.5, 0.25, 0.5, 2.25, -2.5, 0.25]);
+    expect(read.parts[0].texture?.mime).toBe('image/png');
   });
 
   it('warns before skipping non-triangle primitives and rejects unknown required extensions', async () => {

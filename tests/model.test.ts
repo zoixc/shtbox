@@ -258,9 +258,10 @@ describe('BMW 116i: GLB + процедурные агрегаты', () => {
     expect([...rig.openables.keys()].sort()).toEqual(['door_fl', 'door_fr', 'door_rl', 'door_rr', 'hood', 'trunk']);
     const paintMesh = rig.paint.values().next().value as Mesh | undefined;
     const paintMaterial = paintMesh?.material as MeshPhysicalMaterial | undefined;
-    expect(paintMaterial?.roughness).toBeCloseTo(0.63);
-    expect(paintMaterial?.metalness).toBeCloseTo(0.025);
-    expect(paintMaterial?.clearcoat).toBeCloseTo(0.1);
+    // у гибридного BMW кузов из GLB окрашен пресетом «матовый» (см. FINISH в paintMaterial.ts)
+    expect(paintMaterial?.roughness).toBeCloseTo(0.78);
+    expect(paintMaterial?.metalness).toBeCloseTo(0.02);
+    expect(paintMaterial?.clearcoat).toBeCloseTo(0.06);
 
     // В кузовной модели выпуск на левой стороне (−Z); wall-bulkheads шаблона не должны выходить за неё.
     expect(rig.anchors.get('exhaust')!.position.z).toBeLessThan(0);

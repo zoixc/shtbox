@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { getModel } from './models/registry';
 import { LAYERS } from './models/types';
 import { Menu } from './ui/common';
+import { DEFAULT_FINISH } from './data/paintFinish';
 import { selectZone, setLayer, store, ui, viewerCommands } from './state';
 import type { Viewer } from './view3d/Viewer';
 
@@ -24,6 +25,8 @@ export function ViewerPane() {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [openables, setOpenables] = useState<{ id: string; label: string }[]>([]);
+  const [windows, setWindows] = useState<{ id: string; label: string }[]>([]);
+  const [windowsDown, setWindowsDown] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -43,12 +46,21 @@ export function ViewerPane() {
             ui.selectedZone.value = zone;
           },
           openChanged: (o) => (ui.openZones.value = o),
-          modelReady: () => setOpenables(v.openableZones()),
+          modelReady: () => {
+            setOpenables(v.openableZones());
+            setWindows(v.windowsList().map(({ id, label }) => ({ id, label })));
+          },
         });
         viewer = v;
         viewerCommands.setOpen = (z, o) => v.setOpen(z, o);
         viewerCommands.toggleOpen = (z) => v.toggleOpen(z);
         viewerCommands.setAllOpen = (o) => v.setAllOpen(o);
+        viewerCommands.setWindows = (f) => {
+          v.setWindows(f);
+          setWindowsDown(f);
+        };
+        viewerCommands.setWindow = (z, f) => v.setWindow(z, f);
+        viewerCommands.windowsList = () => v.windowsList().map(({ id, label }) => ({ id, label }));
         viewerCommands.view = (p) => v.view(p as never);
         viewerCommands.lighting = (preset) => v.setLightingPreset(preset);
         if (import.meta.env.DEV) (window as unknown as { __viewer: Viewer }).__viewer = v;
@@ -62,8 +74,19 @@ export function ViewerPane() {
             if (car.id !== lastCar) {
               lastCar = car.id;
               v.markInstant();
+              // у другой машины стёкла снова подняты
+              v.setWindows(0);
+              setWindowsDown(0);
             }
-            v.setModel(getModel(car.modelId), ui.previewColor.value ?? car.color);
+            v.setModel(getModel(car.modelId), ui.previewColor.value ?? car.color, {
+              finish: ui.previewFinish.value ?? car.finish,
+            });
+          }),
+          effect(() => {
+            const car = store.activeCar.value;
+            if (!car) return;
+            // смена покрытия не пересоздаёт модель: материал краски обновляется на месте
+            v.setFinish(ui.previewFinish.value ?? car.finish ?? getModel(car.modelId).defaultFinish ?? DEFAULT_FINISH);
           }),
           effect(() => v.setLayer(ui.layer.value)),
           effect(() => v.setBlueprint(ui.blueprint.value)),
@@ -145,6 +168,26 @@ export function ViewerPane() {
         >
           Чертёж
         </button>
+        {windows.length > 0 && (
+          <Menu
+            up
+            class="btn-glass"
+            label={windowsDown > 0.5 ? 'Стёкла опущены ▴' : 'Стёкла ▴'}
+            title="Стёкла дверей опускаются маской в шейдере: геометрия стекла не режется (см. docs/ADDING_MODELS.md)"
+            ariaLabel="Опустить стёкла дверей"
+            items={[
+              { label: 'Опустить все', active: windowsDown > 0.5, onSelect: () => viewerCommands.setWindows?.(1) },
+              { label: 'Наполовину', active: windowsDown > 0.2 && windowsDown < 0.8, onSelect: () => viewerCommands.setWindows?.(0.45) },
+              { label: 'Поднять все', active: windowsDown <= 0.2, onSelect: () => viewerCommands.setWindows?.(0) },
+              { separator: true, label: '', onSelect: () => {} },
+              ...windows.map((w) => ({
+                label: w.label,
+                keepOpen: true,
+                onSelect: () => viewerCommands.setWindow?.(w.id, 1),
+              })),
+            ]}
+          />
+        )}
         <Menu
           up
           class="btn-glass"

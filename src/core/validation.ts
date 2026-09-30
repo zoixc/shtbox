@@ -6,6 +6,7 @@
 import { isDateStr } from './dates';
 import { b64ToBytes } from './b64';
 import { ATTACHMENT_MIMES, BODY_KINDS } from './types';
+import { isPaintFinish } from '../data/paintFinish';
 import type { Attachment, AttachmentMime, AttachmentOwner, Backup, BackupAttachment, Car, DiagnosticCode, DiagnosticReport, ID, Inspection, InspectionItem, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, MileageEntry, Spot } from './types';
 
 export class ValidationError extends Error {}
@@ -84,6 +85,8 @@ export function sanitizeCar(v: unknown): Car {
     name: str(o.name, LIMITS.name, 'car.name', true),
     modelId: str(o.modelId, 64, 'car.modelId', true),
     color: typeof o.color === 'string' && COLOR_RE.test(o.color) ? o.color : '#c9ccd1',
+    colorCode: typeof o.colorCode === 'string' && o.colorCode.trim() && o.colorCode.length <= 24 ? o.colorCode.trim() : undefined,
+    finish: isPaintFinish(o.finish) ? o.finish : undefined,
     plate: str(o.plate, 20, 'car.plate'),
     vin: str(o.vin, 32, 'car.vin'),
     year: num(o.year, 1900, 2100),

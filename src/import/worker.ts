@@ -11,7 +11,7 @@ import { processModel } from './pipeline';
 import type { Profile, RawPart } from './types';
 
 export type WorkerReq =
-  | { type: 'import'; id: number; data: ArrayBuffer; title: string; hint?: AnalyzeHint; preserveTextures?: boolean }
+  | { type: 'import'; id: number; data: ArrayBuffer; title: string; hint?: AnalyzeHint; preserveTextures?: boolean; budget?: number }
   | { type: 'load'; id: number; data: ArrayBuffer }
   | { type: 'analyze'; id: number; title: string; hint: AnalyzeHint };
 
@@ -58,6 +58,7 @@ ctx.onmessage = async (e: MessageEvent<WorkerReq>) => {
         hint: m.hint,
         avgColor,
         preserveTextures: m.preserveTextures,
+        budget: m.budget,
         onProgress: (stage, frac) => post({ type: 'progress', id: m.id, stage, frac }),
       });
       parts = r.parts;

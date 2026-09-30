@@ -1,4 +1,10 @@
-import { Color, Matrix3, Matrix4, MeshPhysicalMaterial, Vector4 } from 'three';
+import { Color, Matrix3, Matrix4, MeshPhysicalMaterial, Vector3, Vector4 } from 'three';
+import { DEFAULT_FINISH } from '../data/paintFinish';
+import type { PaintFinish } from '../data/paintFinish';
+
+// словарь покрытий живёт в data/paintFinish.ts (без зависимости от three), здесь — только оттенки шейдера
+export { FINISH_HINT, FINISH_LABEL, PAINT_FINISHES, isPaintFinish } from '../data/paintFinish';
+export type { PaintFinish } from '../data/paintFinish';
 import type { Mesh, Material, WebGLProgramParametersWithUniforms } from 'three';
 
 /**
@@ -18,6 +24,10 @@ export interface PaintFx {
   spotB: Vector4[]; // x — тип, y — сила (0..1), z — seed
   spotN: Vector4[]; // xyz — нормаль поверхности
   arch: Vector4; // x,y,r — вырез колёсной арки (в плоскости XY локальных координат), w — включён
+  /** x — верх маски стекла, y — низ, z — включена ли маска (локальные Y) */
+  win: Vector3;
+  /** сила «хлопьев» металлика/перламутра, 0 — выключено */
+  flake: { value: number };
   hi: { value: number };
   hiColor: { value: Color };
   nm: { value: Matrix3 };
@@ -33,6 +43,8 @@ uniform vec4 uSpotA[MAX_SPOTS];
 uniform vec4 uSpotB[MAX_SPOTS];
 uniform vec4 uSpotN[MAX_SPOTS];
 uniform vec4 uArch;
+uniform vec3 uWin;
+uniform float uFlake;
 uniform float uHi;
 uniform vec3 uHiColor;
 uniform mat3 uNM;
@@ -50,6 +62,13 @@ float fbm(vec3 p){ float a=.5, s=0.; for(int k=0;k<4;k++){ s+=a*vnoise(p); p=p*2
 `;
 
 const FRAG_ARCH = /* glsl */ `if (uArch.w > 0.5 && length(vLPos.xy - uArch.xy) < uArch.z) discard;`;
+
+/**
+ * Опущенное стекло: створка уезжает вниз, а видимой остаётся только полоса между
+ * поясом кузова и верхом проёма. Режем по локальной высоте — тогда край стекла
+ * остаётся «настоящим» (со своей формой), а не срезается по прямой.
+ */
+const FRAG_WINDOW = /* glsl */ `if (uWin.z > 0.5 && (vLPos.y > uWin.x || vLPos.y < uWin.y)) discard;`;
 
 const FRAG_COLOR = /* glsl */ `
 float rustM = 0.0, chipM = 0.0, scrM = 0.0, mkM = 0.0;
@@ -144,8 +163,17 @@ vec3 spotCol = vec3(0.0);
 }
 `;
 
-const FRAG_ROUGH = /* glsl */ `roughnessFactor = mix(roughnessFactor, 0.96, max(rustM, chipM * 0.8));`;
-const FRAG_METAL = /* glsl */ `metalnessFactor = mix(metalnessFactor, 0.0, max(rustM, scrM * 0.5));`;
+const FRAG_ROUGH = /* glsl */ `
+roughnessFactor = mix(roughnessFactor, 0.96, max(rustM, chipM * 0.8));
+if (uFlake > 0.001) {
+  // «алюминиевая пудра»: мелкие чешуйки дают блик, поэтому шероховатость скачет по площади
+  float flake = h31(floor(vLPos * 780.0));
+  float flake2 = h31(floor(vLPos * 240.0) + 3.7);
+  roughnessFactor = mix(roughnessFactor, mix(roughnessFactor, 0.05, flake), uFlake * mix(0.45, 0.8, flake2));
+}`;
+const FRAG_METAL = /* glsl */ `
+metalnessFactor = mix(metalnessFactor, 0.0, max(rustM, scrM * 0.5));
+if (uFlake > 0.001) metalnessFactor = clamp(metalnessFactor * (1.0 - 0.35 * uFlake) + 0.5 * uFlake * h31(floor(vLPos * 780.0)), 0.0, 1.0);`;
 const FRAG_NORMAL = /* glsl */ `normal = normalize(normal - uNM * dentGrad);`;
 const FRAG_CLEARCOAT = /* glsl */ `material.clearcoat *= (1.0 - clamp(rustM + chipM, 0.0, 1.0));`;
 
@@ -154,6 +182,8 @@ function patch(shader: WebGLProgramParametersWithUniforms, fx: PaintFx, time: { 
   shader.uniforms.uSpotB = { value: fx.spotB };
   shader.uniforms.uSpotN = { value: fx.spotN };
   shader.uniforms.uArch = { value: fx.arch };
+  shader.uniforms.uWin = { value: fx.win };
+  shader.uniforms.uFlake = fx.flake;
   shader.uniforms.uHi = fx.hi;
   shader.uniforms.uHiColor = fx.hiColor;
   shader.uniforms.uNM = fx.nm;
@@ -162,7 +192,7 @@ function patch(shader: WebGLProgramParametersWithUniforms, fx: PaintFx, time: { 
     .replace('#include <common>', `#include <common>\n${VERT_PARS}`)
     .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERT_MAIN}`);
   let f = shader.fragmentShader.replace('#include <common>', `#include <common>\n${FRAG_PARS}`);
-  f = f.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${FRAG_ARCH}`);
+  f = f.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${FRAG_ARCH}\n${FRAG_WINDOW}`);
   if (full) {
     f = f
       .replace('#include <color_fragment>', `#include <color_fragment>\n${FRAG_COLOR}`)
@@ -181,6 +211,8 @@ export function createFx(): PaintFx {
     spotB: Array.from({ length: MAX_SPOTS }, () => new Vector4()),
     spotN: Array.from({ length: MAX_SPOTS }, () => new Vector4(0, 1, 0, 0)),
     arch: new Vector4(0, 0, 0, 0),
+    win: new Vector3(0, 0, 0),
+    flake: { value: 0 },
     hi: { value: 0 },
     hiColor: { value: new Color(0x2f9bff) },
     nm: { value: new Matrix3() },
@@ -195,26 +227,66 @@ export function getFx(m: Material): PaintFx | undefined {
   return (m.userData as Record<string, PaintFx | undefined>)[FX_KEY];
 }
 
-/** Материал краски с шейдерными повреждениями. */
-export type PaintFinish = 'gloss' | 'satin' | 'matte';
+interface FinishParams {
+  metalness: number;
+  roughness: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
+  envMapIntensity: number;
+  /** сила «чешуек» в шейдере (0 — металлик выключен) */
+  flake: number;
+  iridescence?: number;
+  iridescenceIOR?: number;
+}
 
 /**
- * Параметры лака. «gloss» — для гладких процедурных панелей; «satin» — для моделей из файлов
- * (сканы и чужие меши с шумными нормалями при сильной зеркальности выглядят «хромом»).
+ * Параметры покрытия. Значения — визуальные, не колориметрические: приложение не измеряет
+ * лак, а показывает его характерный вид (см. подсказки `FINISH_HINT`).
  */
-const FINISH: Record<PaintFinish, { metalness: number; roughness: number; clearcoat: number; clearcoatRoughness: number; envMapIntensity: number }> = {
-  gloss: { metalness: 0.35, roughness: 0.34, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 1.0 },
-  satin: { metalness: 0.08, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.3, envMapIntensity: 0.55 },
-  matte: { metalness: 0.025, roughness: 0.63, clearcoat: 0.1, clearcoatRoughness: 0.45, envMapIntensity: 0.38 },
+const FINISH: Record<PaintFinish, FinishParams> = {
+  matte: { metalness: 0.02, roughness: 0.78, clearcoat: 0.06, clearcoatRoughness: 0.5, envMapIntensity: 0.3, flake: 0 },
+  satin: { metalness: 0.05, roughness: 0.58, clearcoat: 0.25, clearcoatRoughness: 0.35, envMapIntensity: 0.5, flake: 0 },
+  solid: { metalness: 0.03, roughness: 0.42, clearcoat: 0.55, clearcoatRoughness: 0.22, envMapIntensity: 0.8, flake: 0 },
+  'semi-gloss': { metalness: 0.06, roughness: 0.32, clearcoat: 0.75, clearcoatRoughness: 0.14, envMapIntensity: 0.95, flake: 0 },
+  gloss: { metalness: 0.1, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.1, flake: 0 },
+  metallic: { metalness: 0.62, roughness: 0.3, clearcoat: 0.9, clearcoatRoughness: 0.1, envMapIntensity: 1.1, flake: 1 },
+  pearl: { metalness: 0.42, roughness: 0.24, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.2, flake: 0.5, iridescence: 0.85, iridescenceIOR: 1.9 },
 };
 
-export function createPaintMaterial(color: number | string, finish: PaintFinish = 'gloss'): MeshPhysicalMaterial {
-  const m = new MeshPhysicalMaterial({ color: new Color(color), ...FINISH[finish] });
+/** Применяет покрытие к материалу краски (можно менять на лету). */
+export function setPaintFinish(material: MeshPhysicalMaterial, finish: PaintFinish): void {
+  const p = FINISH[finish] ?? FINISH.gloss;
+  material.metalness = p.metalness;
+  material.roughness = p.roughness;
+  material.clearcoat = p.clearcoat;
+  material.clearcoatRoughness = p.clearcoatRoughness;
+  material.envMapIntensity = p.envMapIntensity;
+  material.iridescence = p.iridescence ?? 0;
+  material.iridescenceIOR = p.iridescenceIOR ?? 1.3;
+  const fx = getFx(material);
+  if (fx) fx.flake.value = p.flake;
+  material.needsUpdate = true;
+}
+
+export function createPaintMaterial(color: number | string, finish: PaintFinish = DEFAULT_FINISH): MeshPhysicalMaterial {
+  const m = new MeshPhysicalMaterial({ color: new Color(color) });
   const fx = createFx();
   (m.userData as Record<string, unknown>)[FX_KEY] = fx;
   m.onBeforeCompile = (sh) => patch(sh, fx, globalTime, true);
   m.customProgramCacheKey = () => 'paint-v1';
+  setPaintFinish(m, finish);
   return m;
+}
+
+/**
+ * Маска опущенного стекла: показываем только полосу между `bottom` и `top` (локальные Y створки).
+ * `null` — вернуть стекло в исходное состояние.
+ */
+export function setWindowMask(material: Material, range: { top: number; bottom: number } | null): void {
+  const fx = getFx(material);
+  if (!fx) return;
+  if (range) fx.win.set(range.top, range.bottom, 1);
+  else fx.win.set(0, 0, 0);
 }
 
 /** Любой другой материал: вырез арки + подсветка выбора (без повреждений). */
