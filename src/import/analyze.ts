@@ -5,7 +5,7 @@
  */
 import { bboxOf, centerOf, sizeOf, transformed, unionBox, yawBox } from './frame';
 import type { Box } from './frame';
-import type { BodyType, Dims, Frame, Kind, Lines, PartInfo, Profile, RawPart, Vec3 } from './types';
+import type { BodyType, DataConfidence, Dims, Frame, Kind, Lines, PartInfo, Profile, RawPart, Vec3 } from './types';
 
 export interface AnalyzeHint {
   yaw?: number;
@@ -28,6 +28,7 @@ const RE_GLASS = /glass|window|windshield|windscreen|wind_?screen|стекл/i;
 const RE_PAINT = /paint|body|carpaint|lak|exterior|кузов|краск/i;
 const RE_NOT_PAINT = /rubber|tire|tyre|black|plastic|chrome|silver|metal|interior|seat|leather|glass|window|light|lamp|carbon|steel|alu|wheel|rim|disc|brake|license|plate/i;
 const RE_BRAKE = /brake|caliper|rotor/i;
+const RE_WHEEL = /wheel|tire|tyre|rim/i;
 
 const median = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : 0);
 const inside = (c: Vec3, b: Box, pad = 0) => [0, 1, 2].every((a) => c[a] >= b.min[a] - pad && c[a] <= b.max[a] + pad);
@@ -57,18 +58,20 @@ function glassStats(parts: { pos: Float32Array; c: Vec3 }[], hw: number): GlassS
       const cx = (pos[t] + pos[t + 3] + pos[t + 6]) / 3;
       const cy = (pos[t + 1] + pos[t + 4] + pos[t + 7]) / 3;
       const cz = (pos[t + 2] + pos[t + 5] + pos[t + 8]) / 3;
-      const xs = [pos[t], pos[t + 3], pos[t + 6]];
+      const x0 = pos[t], x1 = pos[t + 3], x2 = pos[t + 6];
+      const minX = Math.min(x0, x1, x2);
+      const maxX = Math.max(x0, x1, x2);
       if (az > ax) {
         if (Math.abs(cz) < 0.35 * hw) continue;
         g.side.x.push(cx);
         if (cy < g.side.yMin) g.side.yMin = cy;
-        g.side.xMin = Math.min(g.side.xMin, ...xs);
-        g.side.xMax = Math.max(g.side.xMax, ...xs);
+        g.side.xMin = Math.min(g.side.xMin, minX);
+        g.side.xMax = Math.max(g.side.xMax, maxX);
       } else {
         const bucket = cx > xMid ? g.front : g.rear;
         bucket.n++;
-        bucket.xMin = Math.min(bucket.xMin, ...xs);
-        bucket.xMax = Math.max(bucket.xMax, ...xs);
+        bucket.xMin = Math.min(bucket.xMin, minX);
+        bucket.xMax = Math.max(bucket.xMax, maxX);
       }
     }
   }
@@ -188,21 +191,34 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
 
   // ---------- 5. типы деталей (предварительно) ----------
   const kind = new Map<string, Kind>();
+  const confidence = new Map<string, DataConfidence>();
   for (const p of parts) {
     const name = `${p.name} ${p.material}`;
     const sz = sizeOf(B(p));
     const small = Math.max(...sz) * scale < 0.3;
     let k: Kind = 'trim';
-    if (hidden.has(p.id)) k = 'hide';
-    else if (wheelMembers.has(p.id)) k = RE_BRAKE.test(name) ? 'brake' : 'wheel';
-    else if (RE_LIGHT.test(name) || (p.emissive && p.alpha >= 0.98 && small)) k = 'light';
-    else if ((p.alpha < 0.97 || RE_GLASS.test(name)) && !small) k = 'glass';
+    let c: DataConfidence = 'low';
+    if (hidden.has(p.id)) {
+      k = 'hide';
+      c = 'medium';
+    } else if (wheelMembers.has(p.id)) {
+      k = RE_BRAKE.test(name) ? 'brake' : 'wheel';
+      c = RE_BRAKE.test(name) || RE_WHEEL.test(name) ? 'high' : 'medium';
+    } else if (RE_LIGHT.test(name) || (p.emissive && p.alpha >= 0.98 && small)) {
+      k = 'light';
+      c = RE_LIGHT.test(name) ? 'high' : 'medium';
+    } else if ((p.alpha < 0.97 || RE_GLASS.test(name)) && !small) {
+      k = 'glass';
+      c = RE_GLASS.test(name) ? 'high' : 'medium';
+    }
     kind.set(p.id, k);
+    confidence.set(p.id, c);
   }
 
   // материалы краски: по названию, иначе — материал с наибольшим числом треугольников в крупных деталях
   const free = vis.filter((p) => kind.get(p.id) === 'trim');
   let paintMats = hint.paint;
+  let inferredPaintConfidence: DataConfidence = hint.paint ? 'high' : 'low';
   if (!paintMats) {
     const diag = (p: RawPart) => Math.hypot(...sizeOf(B(p))) * scale;
     const score = new Map<string, number>();
@@ -215,10 +231,17 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
       if (RE_PAINT.test(p.material)) named.set(p.material, (named.get(p.material) ?? 0) + tris);
     }
     const top = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    const pick = top(named) ?? top(score) ?? free[0]?.material;
+    const namedPick = top(named);
+    const scoredPick = top(score);
+    const pick = namedPick ?? scoredPick ?? free[0]?.material;
+    inferredPaintConfidence = namedPick ? 'high' : scoredPick ? 'medium' : 'low';
     paintMats = pick ? [pick] : [];
   }
-  for (const p of free) if (paintMats.includes(p.material)) kind.set(p.id, 'paint');
+  for (const p of free) {
+    if (!paintMats.includes(p.material)) continue;
+    kind.set(p.id, 'paint');
+    confidence.set(p.id, hint.paint || RE_PAINT.test(p.material) ? 'high' : inferredPaintConfidence);
+  }
 
   // ---------- 6. габариты ----------
   const paintBoxes = vis.filter((p) => kind.get(p.id) === 'paint').map((p) => car(yawBox(B(p), yaw)));
@@ -320,7 +343,9 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
   const infos: Record<string, PartInfo> = {};
   for (const p of parts) {
     const keep = hint.keep?.[p.id];
-    infos[p.id] = keep?.u ? keep : { n: p.name, k: kind.get(p.id) ?? 'trim', m: p.material };
+    infos[p.id] = keep?.u
+      ? keep
+      : { n: p.name, k: kind.get(p.id) ?? 'trim', m: p.material, confidence: confidence.get(p.id) ?? 'low' };
   }
   return {
     v: 1,
@@ -328,6 +353,12 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
     body,
     layout: hint.layout ?? 'front',
     driver: hint.driver ?? 'l',
+    provenance: {
+      dimensions: hint.length !== undefined ? 'manual' : 'auto',
+      dimensionsConfidence: hint.length !== undefined ? 'medium' : 'low',
+      panelBoundaries: hint.body !== undefined ? 'manual' : 'auto',
+      panelBoundariesConfidence: hint.body !== undefined ? 'medium' : 'low',
+    },
     frame,
     dims,
     lines,

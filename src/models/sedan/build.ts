@@ -3,6 +3,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   CatmullRomCurve3,
+  CircleGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
@@ -33,6 +34,10 @@ import type { BodySpec } from './loft';
 
 export interface SedanSpec {
   body: BodySpec;
+  /** Точечный дизайн кузова конкретной модели; общий стиль остаётся опциональным. */
+  style?: 'solaris-i-2011' | 'bmw-e81-2009';
+  /** Боковые двери на весь кузов: по умолчанию 5-дверный шаблон (две двери на сторону). */
+  sideDoors?: 3 | 5;
   /** форма задней части: седан (крышка багажника + неподвижное заднее стекло) или хэтчбек (5-я дверь со стеклом) */
   tail?: 'notchback' | 'hatch';
   /** привод: FWD — поперечный двигатель, RWD — продольный двигатель, карданный вал и редуктор */
@@ -44,9 +49,14 @@ export interface SedanSpec {
   frontAxleX: number;
   rearAxleX: number;
   trackHalf: number;
+  /** Per-axle centerline tracks; when omitted, the shared mean trackHalf is used. */
+  frontTrackHalf?: number;
+  rearTrackHalf?: number;
   wheelR: number;
   tireW: number;
   archR: number;
+  /** сторона выпускной системы: −1 = левая (−Z), +1 = правая (+Z); по умолчанию правая */
+  exhaustSide?: -1 | 1;
   /** границы панелей по X (от носа к корме) */
   x: {
     bumperFront: number;
@@ -168,13 +178,271 @@ class Builder {
 
 const box = (w: number, h: number, d: number, r = 0.012) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001));
 
+function addSolarisFascia(b: Builder, parent: Group, spec: SedanSpec): void {
+  const xf = spec.xFront;
+  const addShape = (points: [number, number][], depth: number, mat: Material, xOffset: number, y: number) => {
+    const shape = new Shape();
+    shape.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+    shape.closePath();
+    const geometry = new ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+    geometry.rotateY(Math.PI / 2);
+    const mesh = b.mesh(geometry, mat, parent, 'bumper_f', [xf + xOffset, y, 0]);
+    b.shell.push(mesh);
+    return mesh;
+  };
+  const trapezoid = (top: number, bottom: number, height: number, depth: number, y: number, xOffset: number, mat: Material) =>
+    addShape([[-top / 2, height / 2], [top / 2, height / 2], [bottom / 2, -height / 2], [-bottom / 2, -height / 2]], depth, mat, xOffset, y);
+  const frontBar = (width: number, thickness: number, y: number, mat: Material) => {
+    const mesh = b.mesh(box(thickness, 0.006, width, 0.002), mat, parent, 'bumper_f', [xf + 0.001 - thickness / 2, y, 0]);
+    b.shell.push(mesh);
+    return mesh;
+  };
+
+  // Небольшая «крылатая» верхняя решётка с хромированной окантовкой и овальным знаком Hyundai.
+  trapezoid(0.72, 0.63, 0.145, 0.018, 0.705, -0.017, mats.chrome());
+  trapezoid(0.675, 0.585, 0.105, 0.018, 0.705, -0.017, mats.trim());
+  frontBar(0.56, 0.009, 0.677, mats.chrome());
+  frontBar(0.59, 0.009, 0.705, mats.chrome());
+  frontBar(0.62, 0.009, 0.733, mats.chrome());
+
+  const badge = b.mesh(new TorusGeometry(0.049, 0.008, 8, 32), mats.chrome(), parent, 'bumper_f', [xf - 0.007, 0.708, 0], [0, Math.PI / 2, 0]);
+  badge.scale.y = 0.58;
+  b.shell.push(badge);
+  const mark = (points: Vec3[]) => {
+    const curve = new CatmullRomCurve3(points.map((p) => new Vector3(...p)));
+    const mesh = b.mesh(new TubeGeometry(curve, 10, 0.004, 5, false), mats.chrome(), parent, 'bumper_f');
+    b.shell.push(mesh);
+  };
+  mark([[xf - 0.003, 0.684, -0.018], [xf - 0.003, 0.732, -0.01]]);
+  mark([[xf - 0.003, 0.684, 0.01], [xf - 0.003, 0.732, 0.018]]);
+  mark([[xf - 0.003, 0.707, -0.014], [xf - 0.003, 0.711, 0], [xf - 0.003, 0.715, 0.014]]);
+
+  // Широкий нижний воздухозаборник, визуально отделённый от узкой верхней решётки.
+  trapezoid(0.84, 0.73, 0.145, 0.02, 0.39, -0.019, mats.trim());
+  frontBar(0.69, 0.008, 0.35, mats.rimDark());
+  frontBar(0.73, 0.008, 0.382, mats.rimDark());
+  frontBar(0.75, 0.008, 0.414, mats.rimDark());
+
+  // Вертикальные противотуманные фонари в углах бампера — характерный элемент Solaris I.
+  for (const side of [-1, 1] as const) {
+    const z = side * 0.555;
+    const bezel = b.mesh(box(0.025, 0.16, 0.105, 0.025), mats.chrome(), parent, 'bumper_f', [xf - 0.0115, 0.405, z]);
+    const lens = b.mesh(box(0.027, 0.112, 0.062, 0.022), mats.lightF(), parent, 'bumper_f', [xf - 0.0125, 0.405, z]);
+    b.shell.push(bezel, lens);
+  }
+}
+
+function addBmwE81Fascia(b: Builder, parent: Group, contentOf: Map<string, Group>, loft: BodyLoft, spec: SedanSpec): void {
+  const xf = spec.xFront;
+  const addShape = (points: [number, number][], depth: number, y: number, centerZ: number, mat: Material) => {
+    const shape = new Shape();
+    shape.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+    shape.closePath();
+    const geometry = new ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+    geometry.rotateY(Math.PI / 2);
+    const mesh = b.mesh(geometry, mat, parent, 'bumper_f', [xf - depth + 0.001, y, centerZ]);
+    b.shell.push(mesh);
+  };
+  const trapezoid = (top: number, bottom: number, height: number, depth: number, y: number, centerZ: number, mat: Material) =>
+    addShape([[-top / 2, height / 2], [top / 2, height / 2], [bottom / 2, -height / 2], [-bottom / 2, -height / 2]], depth, y, centerZ, mat);
+  const frontBox = (depth: number, height: number, width: number, y: number, z: number, mat: Material, radius = 0.002) => {
+    const mesh = b.mesh(box(depth, height, width, radius), mat, parent, 'bumper_f', [xf + 0.001 - depth / 2, y, z]);
+    b.shell.push(mesh);
+    return mesh;
+  };
+
+  // Парные вертикальные «ноздри» с хромированным контуром и тёмными вертикальными ламелями.
+  for (const centerZ of [-0.108, 0.108]) {
+    trapezoid(0.164, 0.144, 0.19, 0.016, 0.695, centerZ, mats.chrome());
+    trapezoid(0.126, 0.108, 0.15, 0.016, 0.695, centerZ, mats.trim());
+    for (let slat = -2; slat <= 2; slat++) {
+      frontBox(0.008, 0.13, 0.007, 0.695, centerZ + slat * 0.02, mats.rimDark());
+    }
+  }
+
+  // Широкий нижний воздухозаборник и компактные прямоугольные противотуманные фонари.
+  trapezoid(0.88, 0.76, 0.14, 0.02, 0.365, 0, mats.trim());
+  for (const y of [0.335, 0.365, 0.395]) frontBox(0.008, 0.006, 0.7, y, 0, mats.rimDark());
+  for (const side of [-1, 1] as const) {
+    frontBox(0.018, 0.095, 0.14, 0.405, side * 0.59, mats.trim(), 0.012);
+    frontBox(0.02, 0.052, 0.082, 0.405, side * 0.59, mats.lightF(), 0.01);
+  }
+
+  // Круглая эмблема на носу капота; она остаётся вместе с открываемой панелью.
+  const hood = contentOf.get('hood');
+  if (hood) {
+    const logoX = xf - 0.12;
+    const logoY = loft.topY(logoX);
+    const outer = b.mesh(new CylinderGeometry(0.054, 0.054, 0.008, 32), mats.trim(), hood, 'hood', [logoX, logoY + 0.004, 0]);
+    const face = b.mesh(new CylinderGeometry(0.047, 0.047, 0.004, 32), mats.plate(), hood, 'hood', [logoX, logoY + 0.009, 0]);
+    const blue = enhanceMaterial(new MeshStandardMaterial({ color: 0x1f5da8, roughness: 0.52, metalness: 0.12 }));
+    for (const [start, end] of [[0, Math.PI / 2], [Math.PI, (Math.PI * 3) / 2]]) {
+      const sector = new Shape();
+      sector.moveTo(0, 0);
+      sector.absarc(0, 0, 0.039, start, end, false);
+      sector.lineTo(0, 0);
+      const geometry = new ShapeGeometry(sector);
+      geometry.rotateX(-Math.PI / 2);
+      const mesh = b.mesh(geometry, blue, hood, 'hood', [logoX, logoY + 0.012, 0]);
+      b.shell.push(mesh);
+    }
+    const ring = b.mesh(new TorusGeometry(0.05, 0.0035, 8, 32), mats.chrome(), hood, 'hood', [logoX, logoY + 0.012, 0], [-Math.PI / 2, 0, 0]);
+    b.shell.push(outer, face, ring);
+  }
+}
+
+function addBmwE81LampDetails(b: Builder, front: Group, rear: Group, loft: BodyLoft, spec: SedanSpec): void {
+  const xf = spec.xFront;
+  for (const side of [-1, 1] as const) {
+    const centerZ = side * 0.49;
+    const housing = b.mesh(box(0.025, 0.12, 0.32, 0.035), mats.chrome(), front, 'lights_f', [xf - 0.012, 0.66, centerZ]);
+    const lens = b.mesh(box(0.012, 0.092, 0.29, 0.03), mats.glass(), front, 'lights_f', [xf - 0.001, 0.66, centerZ]);
+    b.shell.push(housing, lens);
+    // Twin round projector / halo motifs on each side, facing forward (+X).
+    for (const z of [side * 0.425, side * 0.555]) {
+      const ring = b.mesh(new TorusGeometry(0.031, 0.0045, 8, 24), mats.chrome(), front, 'lights_f', [xf, 0.66, z], [0, Math.PI / 2, 0]);
+      const projector = b.mesh(new CircleGeometry(0.021, 24), mats.lightF(), front, 'lights_f', [xf, 0.66, z], [0, Math.PI / 2, 0]);
+      b.shell.push(ring, projector);
+    }
+
+    // Tall red rear lens on the quarter panel, wrapping toward the short hatch.
+    const x = spec.x.bumperRear + 0.145;
+    const y = 0.78;
+    const surfaceZ = side * (loft.sideZ(x, y) + 0.012);
+    const bezel = b.mesh(box(0.2, 0.245, 0.03, 0.018), mats.trim(), rear, 'lights_r', [x, y, surfaceZ]);
+    const lensR = b.mesh(box(0.175, 0.22, 0.032, 0.016), mats.lightR(), rear, 'lights_r', [x, y, surfaceZ + side * 0.005]);
+    const reverse = b.mesh(box(0.056, 0.045, 0.034, 0.01), mats.plate(), rear, 'lights_r', [x - 0.035, y - 0.045, surfaceZ + side * 0.009]);
+    b.shell.push(bezel, lensR, reverse);
+  }
+}
+
+function addBmwE81RearDetails(b: Builder, contentOf: Map<string, Group>, loft: BodyLoft, spec: SedanSpec): void {
+  const hatch = contentOf.get('trunk');
+  if (!hatch) return;
+  const badgeX = spec.x.bumperRear + 0.035;
+  const badgeY = loft.topY(badgeX) - 0.025;
+  const badge = b.mesh(new TorusGeometry(0.046, 0.004, 8, 32), mats.chrome(), hatch, 'trunk', [badgeX, badgeY, 0], [0, -Math.PI / 2, 0]);
+  const disk = b.mesh(new CylinderGeometry(0.043, 0.043, 0.006, 32), mats.trim(), hatch, 'trunk', [badgeX, badgeY, 0], [0, 0, Math.PI / 2]);
+  b.shell.push(badge, disk);
+  // Rear-window wiper belongs to the hatch and moves with it.
+  const wiperX = spec.x.trunkFront + 0.08;
+  const wiperY = loft.topY(wiperX) - 0.055;
+  const wiper = b.mesh(box(0.018, 0.012, 0.7, 0.004), mats.trim(), hatch, 'trunk', [wiperX, wiperY, 0]);
+  b.shell.push(wiper);
+}
+
+function addBmwE81CharacterLines(b: Builder, loft: BodyLoft, spec: SedanSpec, contentOf: Map<string, Group>): void {
+  const X = spec.x;
+  const spans = [
+    { right: 'fender_fr', left: 'fender_fl', x0: X.bumperFront - 0.16, x1: X.doorFront, upper: [0.77, 0.83], lower: [0.46, 0.53] },
+    { right: 'door_fr', left: 'door_fl', x0: X.doorFront, x1: X.doorRear, upper: [0.83, 0.88], lower: [0.53, 0.6] },
+    { right: 'quarter_rr', left: 'quarter_rl', x0: X.doorRear, x1: X.bumperRear + 0.12, upper: [0.88, 0.78], lower: [0.6, 0.48] },
+  ];
+  for (const side of [-1, 1] as const) {
+    for (const span of spans) {
+      const zone = side > 0 ? span.right : span.left;
+      const parent = contentOf.get(zone);
+      if (!parent) continue;
+      for (const [y0, y1] of [span.upper, span.lower]) {
+        const count = Math.max(5, Math.ceil(Math.abs(span.x0 - span.x1) / 0.11));
+        const points: Vector3[] = [];
+        for (let i = 0; i <= count; i++) {
+          const t = i / count;
+          const x = span.x0 + (span.x1 - span.x0) * t;
+          const y = y0 + (y1 - y0) * t;
+          points.push(new Vector3(x, y, side * (loft.sideZ(x, y) + 0.005)));
+        }
+        const crease = new Mesh(
+          new TubeGeometry(new CatmullRomCurve3(points), count * 2, 0.005, 5, false),
+          enhanceMaterial(new MeshStandardMaterial({ color: 0x747d86, roughness: 0.62, metalness: 0.2, transparent: true, opacity: 0.42, depthWrite: false })),
+        );
+        crease.userData.zone = zone;
+        parent.add(crease);
+        b.pick.get(zone)?.push(crease);
+        b.shell.push(crease);
+      }
+    }
+
+    const zone = side > 0 ? 'quarter_rr' : 'quarter_rl';
+    const parent = contentOf.get(zone);
+    if (parent) {
+      // Narrow black B-pillar framing the fixed rear quarter window, not another door.
+      const x = X.doorRear + 0.006;
+      const y0 = 0.96;
+      const y1 = loft.topY(x) - 0.07;
+      const points = Array.from({ length: 7 }, (_, i) => {
+        const t = i / 6;
+        const y = y0 + (y1 - y0) * t;
+        return new Vector3(x, y, side * (loft.sideZ(x, y) + 0.012));
+      });
+      const pillar = new Mesh(new TubeGeometry(new CatmullRomCurve3(points), 12, 0.018, 6, false), mats.trim());
+      pillar.userData.zone = zone;
+      parent.add(pillar);
+      b.pick.get(zone)?.push(pillar);
+      b.shell.push(pillar);
+    }
+  }
+}
+
+function addSolarisRearDetails(b: Builder, contentOf: Map<string, Group>, spec: SedanSpec): void {
+  const rear = contentOf.get('bumper_r');
+  if (!rear) return;
+  const badge = b.mesh(new TorusGeometry(0.046, 0.007, 8, 32), mats.chrome(), rear, 'bumper_r', [spec.xRear + 0.006, 0.885, 0], [0, -Math.PI / 2, 0]);
+  badge.scale.y = 0.58;
+  b.shell.push(badge);
+  const garnish = b.mesh(box(0.014, 0.014, 0.6, 0.004), mats.chrome(), rear, 'bumper_r', [spec.xRear + 0.006, 0.83, 0]);
+  b.shell.push(garnish);
+  for (const side of [-1, 1] as const) {
+    const reflector = b.mesh(box(0.022, 0.045, 0.16, 0.014), mats.lightR(), rear, 'bumper_r', [spec.xRear + 0.01, 0.405, side * 0.56]);
+    b.shell.push(reflector);
+  }
+}
+
+function addSolarisCharacterLines(b: Builder, loft: BodyLoft, spec: SedanSpec, contentOf: Map<string, Group>): void {
+  const X = spec.x;
+  const spans = [
+    { right: 'fender_fr', left: 'fender_fl', x0: X.bumperFront - 0.2, x1: X.doorFront, upper: [0.77, 0.82], lower: [0.46, 0.54] },
+    { right: 'door_fr', left: 'door_fl', x0: X.doorFront, x1: X.doorSplit, upper: [0.82, 0.86], lower: [0.54, 0.6] },
+    { right: 'door_rr', left: 'door_rl', x0: X.doorSplit, x1: X.doorRear, upper: [0.86, 0.84], lower: [0.6, 0.56] },
+    { right: 'quarter_rr', left: 'quarter_rl', x0: X.doorRear, x1: X.bumperRear + 0.12, upper: [0.84, 0.77], lower: [0.56, 0.47] },
+  ];
+  for (const side of [-1, 1] as const) {
+    for (const span of spans) {
+      const zone = side > 0 ? span.right : span.left;
+      const parent = contentOf.get(zone);
+      if (!parent) continue;
+      for (const [y0, y1] of [span.upper, span.lower]) {
+        const count = Math.max(5, Math.ceil(Math.abs(span.x0 - span.x1) / 0.12));
+        const points: Vector3[] = [];
+        for (let i = 0; i <= count; i++) {
+          const t = i / count;
+          const x = span.x0 + (span.x1 - span.x0) * t;
+          const y = y0 + (y1 - y0) * t;
+          points.push(new Vector3(x, y, side * (loft.sideZ(x, y) + 0.006)));
+        }
+        const crease = new Mesh(
+          new TubeGeometry(new CatmullRomCurve3(points), count * 2, 0.006, 5, false),
+          enhanceMaterial(new MeshStandardMaterial({ color: 0x828a91, roughness: 0.62, metalness: 0.18, transparent: true, opacity: 0.48, depthWrite: false })),
+        );
+        crease.userData.zone = zone;
+        parent.add(crease);
+        b.pick.get(zone)?.push(crease);
+        b.shell.push(crease);
+      }
+    }
+  }
+}
+
 // ---------- колесо ----------
 function buildWheel(b: Builder, spec: SedanSpec, zone: string, x: number, side: 1 | -1): void {
   const R = spec.wheelR;
   const W = spec.tireW;
+  const trackHalf = zone.startsWith('wheel_f') ? spec.frontTrackHalf ?? spec.trackHalf : spec.rearTrackHalf ?? spec.trackHalf;
   const g = b.panel(zone);
   const wheel = new Group();
-  wheel.position.set(x, R, side * spec.trackHalf);
+  wheel.position.set(x, R, side * trackHalf);
   g.add(wheel);
   // шина
   const hw = W / 2;
@@ -216,13 +484,14 @@ function buildWheel(b: Builder, spec: SedanSpec, zone: string, x: number, side: 
     mats.bay(),
   );
   liner.rotation.x = Math.PI / 2;
-  liner.position.set(x, R, side * (spec.trackHalf - 0.05));
+  liner.position.set(x, R, side * (trackHalf - 0.05));
   b.root.add(liner);
 }
 
 function buildBrake(b: Builder, spec: SedanSpec, zone: string, x: number, side: 1 | -1, drum: boolean): void {
+  const trackHalf = zone === 'brakes_f' ? spec.frontTrackHalf ?? spec.trackHalf : spec.rearTrackHalf ?? spec.trackHalf;
   const grp = new Group();
-  grp.position.set(x, spec.wheelR, side * (spec.trackHalf - spec.tireW / 2 + 0.06));
+  grp.position.set(x, spec.wheelR, side * (trackHalf - spec.tireW / 2 + 0.06));
   b.root.add(grp);
   if (drum) {
     b.mesh(new CylinderGeometry(0.115, 0.115, 0.06, 28), mats.brake(), grp, zone, [0, 0, 0], [Math.PI / 2, 0, 0]);
@@ -245,6 +514,8 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   const [, , K2, , , K5, K6] = K_IDX;
   const J_TOP0 = K5;
   const J_TOP1 = LOOP_N - K5;
+  const threeDoor = spec.sideDoors === 3;
+  const doorRearBoundary = threeDoor ? X.doorRear : X.doorSplit;
 
   own.rect('shell', 0, grid.rows - 1, 0, LOOP_N);
   // greenhouse + крыша, затем перекрываем деталями
@@ -258,23 +529,36 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   own.side('fender_fr', 'fender_fl', X.bumperFront, X.doorFront, K_IDX[1], K5);
   own.side('quarter_rr', 'quarter_rl', X.doorRear, X.bumperRear, K_IDX[1], K5);
   own.side('sill_r', 'sill_l', X.doorFront, X.doorRear, K_IDX[1], K2 + 1);
-  own.side('door_fr', 'door_fl', X.doorFront, X.doorSplit, K2 + 1, K6);
-  own.side('door_rr', 'door_rl', X.doorSplit, X.doorRear, K2 + 1, K6);
-  // стёкла дверей (с рамкой)
+  own.side('door_fr', 'door_fl', X.doorFront, doorRearBoundary, K2 + 1, K6);
+  if (!threeDoor) own.side('door_rr', 'door_rl', X.doorSplit, X.doorRear, K2 + 1, K6);
+  // Door glazing follows the actual door count; the E81 gets a separate fixed quarter window.
   const gi = (x: number, d: number) => grid.idx(x) + d;
-  own.rect('door_fr:glass', gi(X.doorFront, 1), gi(X.doorSplit, -1), K5, K6 - 1);
-  own.rect('door_fl:glass', gi(X.doorFront, 1), gi(X.doorSplit, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
-  own.rect('door_rr:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), K5, K6 - 1);
-  own.rect('door_rl:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
+  own.rect('door_fr:glass', gi(X.doorFront, 1), gi(doorRearBoundary, -1), K5, K6 - 1);
+  own.rect('door_fl:glass', gi(X.doorFront, 1), gi(doorRearBoundary, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
+  if (threeDoor) {
+    own.rect('quarter_rr:glass', gi(X.doorRear, 1), gi(X.roofRear, -1), K5, K6 - 1);
+    own.rect('quarter_rl:glass', gi(X.doorRear, 1), gi(X.roofRear, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
+  } else {
+    own.rect('door_rr:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), K5, K6 - 1);
+    own.rect('door_rl:glass', gi(X.doorSplit, 1), gi(X.doorRear, -1), LOOP_N - (K6 - 1), LOOP_N - K5);
+  }
   // бамперы поверх всего
   own.rect('bumper_f', 0, grid.idx(X.bumperFront), 0, LOOP_N);
   own.rect('bumper_r', grid.idx(X.bumperRear), grid.rows - 1, 0, LOOP_N);
-  // оптика: обёртка на угол бампера (кольца торца + первые станции борта)
-  const lf0 = 2;
-  const lf1 = grid.idx(X.bumperFront) - 2;
+  // Extended corner lamps are model-specific; the shared BMW/F20 template stays unchanged.
+  const solarisStyle = spec.style === 'solaris-i-2011';
+  const e81Style = spec.style === 'bmw-e81-2009';
+  const longFrontLamp = solarisStyle || e81Style;
+  const lf0 = longFrontLamp ? 1 : 2;
+  const lf1 = solarisStyle
+    ? grid.idx(spec.frontAxleX + 0.15)
+    : e81Style
+      ? grid.idx(spec.frontAxleX + 0.2)
+      : grid.idx(X.bumperFront) - 2;
   own.rect('lights_f', lf0, lf1, K_IDX[3] + 1, K5 + 2);
   own.rect('lights_f', lf0, lf1, LOOP_N - (K5 + 2), LOOP_N - (K_IDX[3] + 1));
-  const lr0 = grid.idx(X.bumperRear) + 2;
+  // Solaris and E81 rear lamps wrap onto the rear quarter; the F20 fallback stays compact.
+  const lr0 = solarisStyle ? grid.idx(X.bumperRear + 0.28) : e81Style ? grid.idx(X.bumperRear + 0.24) : grid.idx(X.bumperRear) + 2;
   const lr1 = grid.rows - 3;
   own.rect('lights_r', lr0, lr1, K_IDX[3] + 1, K5 + 2);
   own.rect('lights_r', lr0, lr1, LOOP_N - (K5 + 2), LOOP_N - (K_IDX[3] + 1));
@@ -289,7 +573,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   const cowlY = loft.topY(X.cowl) - 0.02;
   const trunkY = loft.topY(X.trunkFront) - 0.02;
   const R = spec.archR;
-  const midDoorF = (X.doorFront + X.doorSplit) / 2;
+  const midDoorF = (X.doorFront + doorRearBoundary) / 2;
   const midDoorR = (X.doorSplit + X.doorRear) / 2;
   const defs: PanelDef[] = [
     { zone: 'hood', hinge: [X.cowl, cowlY, 0], axis: [0, 0, 1], angle: 1.0, label: 'Капот', anchor: [1.25, loft.topY(1.25) + 0.01, 0], facing: [0, 1, 0] },
@@ -309,11 +593,13 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
         zone: `door_f${sn}`, hinge: [X.doorFront, 0, sd * hingeZ(X.doorFront)], axis: [0, 1, 0], angle: sd * 1.15, label: sd > 0 ? 'Дверь пер. правая' : 'Дверь пер. левая',
         anchor: [midDoorF, 0.72, sd * (sideZ(midDoorF, 0.72) + 0.01)], facing: [0, 0, sg],
       },
-      {
+    );
+    if (!threeDoor) {
+      defs.push({
         zone: `door_r${sn}`, hinge: [X.doorSplit, 0, sd * hingeZ(X.doorSplit)], axis: [0, 1, 0], angle: sd * 1.05, label: sd > 0 ? 'Дверь зад. правая' : 'Дверь зад. левая',
         anchor: [midDoorR, 0.72, sd * (sideZ(midDoorR, 0.72) + 0.01)], facing: [0, 0, sg],
-      },
-    );
+      });
+    }
   }
 
   const contentOf = new Map<string, Group>();
@@ -346,6 +632,8 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     }
     b.anchor(d.zone, content, d.anchor, d.facing);
   }
+  if (solarisStyle) addSolarisCharacterLines(b, loft, spec, contentOf);
+  if (e81Style) addBmwE81CharacterLines(b, loft, spec, contentOf);
 
   // ---- стёкла кузова
   for (const [zone, anchor, facing] of [
@@ -363,11 +651,13 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   }
 
   // ---- оптика
+  const lightContents = new Map<string, Group>();
   for (const [zone, mk, at, facing] of [
     ['lights_f', mats.lightF, [spec.xFront - 0.02, 0.64, 0.5], [1, 0, 0]],
     ['lights_r', mats.lightR, [spec.xRear + 0.02, 0.72, 0.5], [-1, 0, 0]],
   ] as [string, () => Material, Vec3, Vec3][]) {
     const content = b.panel(zone);
+    lightContents.set(zone, content);
     const g = extractPanel(grid, own, zone, (o) => o === zone);
     if (g) {
       const m = b.mesh(g.geometry, mk(), content, zone);
@@ -376,6 +666,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     }
     b.anchor(zone, content, at, facing);
   }
+  if (e81Style) addBmwE81LampDetails(b, lightContents.get('lights_f')!, lightContents.get('lights_r')!, loft, spec);
 
   // ---- underbody + прочее
   {
@@ -396,10 +687,9 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
   };
   for (const sd of [1, -1] as const) {
     const sn = sd > 0 ? 'r' : 'l';
-    for (const [zone, xc] of [
-      [`door_f${sn}`, midDoorF - 0.22],
-      [`door_r${sn}`, midDoorR - 0.2],
-    ] as [string, number][]) {
+    const handles: [string, number][] = [[`door_f${sn}`, midDoorF - 0.22]];
+    if (!threeDoor) handles.push([`door_r${sn}`, midDoorR - 0.2]);
+    for (const [zone, xc] of handles) {
       const c = contentOf.get(zone)!;
       const hy = 0.86;
       const hm = new Mesh(box(0.15, 0.028, 0.03, 0.01), bodyMat());
@@ -450,7 +740,11 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     // решётка и воздухозаборники, номерной знак
     const c = contentOf.get('bumper_f')!;
     const xf = spec.xFront;
-    if (spec.grille === 'kidney') {
+    if (solarisStyle) {
+      addSolarisFascia(b, c, spec);
+    } else if (e81Style) {
+      addBmwE81Fascia(b, c, contentOf, loft, spec);
+    } else if (spec.grille === 'kidney') {
       for (const [w, h, y, z] of [[0.21, 0.15, 0.6, 0.125], [0.21, 0.15, 0.6, -0.125], [0.9, 0.08, 0.4, 0]] as const) {
         const m = new Mesh(box(0.03, h, w, 0.012), mats.trim());
         m.position.set(xf + 0.004 - 0.005, y, z);
@@ -459,7 +753,7 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
         b.shell.push(m);
       }
     } else {
-      // широкий шестиугольный «рот» с хромированным кантом + нижний воздухозаборник + ПТФ
+      // Wide common grille and fog lamps stay unchanged for BMW Lite and other default sedan specs.
       const trap = (wTop: number, wBot: number, h: number, depth: number, mat: Material, y: number, dx: number) => {
         const sh = new Shape([new Vector2(-wTop / 2, h / 2), new Vector2(wTop / 2, h / 2), new Vector2(wBot / 2, -h / 2), new Vector2(-wBot / 2, -h / 2)]);
         const g = new ExtrudeGeometry(sh, { depth, bevelEnabled: false });
@@ -488,16 +782,18 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
       }
     }
     const plate = new Mesh(box(0.012, 0.115, 0.52, 0.004), mats.plate());
-    plate.position.set(xf + 0.012, 0.47, 0);
+    plate.position.set(solarisStyle || e81Style ? xf - 0.005 : xf + 0.012, solarisStyle ? 0.535 : e81Style ? 0.5 : 0.47, 0);
     plate.userData.zone = 'bumper_f';
     c.add(plate);
     b.shell.push(plate);
     const cr = contentOf.get('bumper_r')!;
     const plateR = new Mesh(box(0.012, 0.115, 0.52, 0.004), mats.plate());
-    plateR.position.set(spec.xRear - 0.012, 0.66, 0);
+    plateR.position.set(solarisStyle || e81Style ? spec.xRear + 0.005 : spec.xRear - 0.012, solarisStyle ? 0.7 : 0.66, 0);
     plateR.userData.zone = 'bumper_r';
     cr.add(plateR);
     b.shell.push(plateR);
+    if (solarisStyle) addSolarisRearDetails(b, contentOf, spec);
+    else if (e81Style) addBmwE81RearDetails(b, contentOf, loft, spec);
   }
 
   // ---- колёса и тормоза
@@ -509,10 +805,10 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     buildBrake(b, spec, 'brakes_f', spec.frontAxleX, sd, false);
     buildBrake(b, spec, 'brakes_r', spec.rearAxleX, sd, true);
   }
-  b.anchor('brakes_f', b.root, [spec.frontAxleX, 0.3, -(spec.trackHalf - 0.1)]);
-  b.anchor('brakes_r', b.root, [spec.rearAxleX, 0.3, -(spec.trackHalf - 0.1)]);
+  b.anchor('brakes_f', b.root, [spec.frontAxleX, 0.3, -((spec.frontTrackHalf ?? spec.trackHalf) - 0.1)]);
+  b.anchor('brakes_r', b.root, [spec.rearAxleX, 0.3, -((spec.rearTrackHalf ?? spec.trackHalf) - 0.1)]);
 
-  buildInterior(b, loft);
+  buildInterior(b, loft, spec);
   buildMech(b, spec);
   buildBays(b, loft, spec);
 
@@ -530,7 +826,10 @@ export function buildSedan(spec: SedanSpec, paintColor: string): ModelRig {
     facing: b.facing,
     shell: b.shell,
     setColor,
-    bounds: { center: [0, 0.7, 0], radius: 3.2 },
+    bounds: {
+      center: [e81Style ? (spec.xFront + spec.xRear) / 2 : 0, e81Style ? 0.7105 : 0.7, 0],
+      radius: solarisStyle || e81Style ? 2.55 : 3.2,
+    },
     dispose() {
       b.root.traverse((o) => {
         const m = o as Mesh;
@@ -554,37 +853,72 @@ function bulkhead(loft: BodyLoft, x: number, yClip: number, mat: Material): Mesh
   return new Mesh(g, mat);
 }
 
+/** Горизонтальный пол отсека, сужающийся по реальной ширине процедурного кузова на каждой станции X. */
+function bayFloorGeometry(loft: BodyLoft, x0: number, x1: number, y: number, inset = 0.08): BufferGeometry {
+  const lo = Math.min(x0, x1);
+  const hi = Math.max(x0, x1);
+  const steps = Math.max(2, Math.ceil((hi - lo) / 0.12));
+  const positions = new Float32Array((steps + 1) * 2 * 3);
+  for (let i = 0; i <= steps; i++) {
+    const x = lo + ((hi - lo) * i) / steps;
+    const width = Math.max(0, loft.sideZ(x, y) - inset);
+    const a = i * 6;
+    positions[a] = x;
+    positions[a + 1] = y;
+    positions[a + 2] = -width;
+    positions[a + 3] = x;
+    positions[a + 4] = y;
+    positions[a + 5] = width;
+  }
+  const indices: number[] = [];
+  for (let i = 0; i < steps; i++) {
+    const a = i * 2;
+    indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+
 function buildBays(b: Builder, loft: BodyLoft, spec: SedanSpec): void {
   const X = spec.x;
   // моторный отсек: щит + пол; выбирается, когда открыт капот
   const bay = b.root;
   const fire = bulkhead(loft, X.cowl + 0.02, 1.0, mats.bay());
+  fire.name = 'engine_bay:bulkhead';
   bay.add(fire);
   b.registerPick('engine_bay', fire);
   b.shell.push(fire);
-  const bayFloor = new Mesh(new BoxGeometry(X.cowl - spec.xFront + 0.3, 0.02, 1.2), mats.bay());
-  bayFloor.position.set((X.cowl + spec.xFront - 0.3) / 2 + 0.05, 0.3, 0);
+  // Пол повторяет сужение носа/крыльев вместо выступающего прямоугольника.
+  const bayFloor = new Mesh(bayFloorGeometry(loft, X.cowl + 0.05, spec.xFront - 0.25, 0.3), mats.bay());
+  bayFloor.name = 'engine_bay:floor';
   bay.add(bayFloor);
   b.registerPick('engine_bay', bayFloor);
   b.shell.push(bayFloor);
   b.anchor('engine_bay', b.root, [1.7, 0.6, 0.35]);
 
-  // багажник
+  // Багажное отделение. Все поверхности принадлежат узлу: при замене кузова они
+  // остаются только если этот отсек действительно достраивается, и зеркалятся вместе с ним.
   const rearWall = bulkhead(loft, -1.3, 0.95, mats.bay());
-  rearWall.userData.bay = true; // остаётся при подмене кузова (см. hatch/hybrid.ts)
+  rearWall.name = 'trunk_bay:bulkhead';
   b.root.add(rearWall);
+  b.registerPick('trunk_bay', rearWall);
   b.shell.push(rearWall);
-  const shelf = new Mesh(new BoxGeometry(0.3, 0.02, 1.3), mats.carpet());
-  shelf.position.set(-1.42, 0.95, 0);
-  shelf.userData.bay = true;
+  const shelf = new Mesh(bayFloorGeometry(loft, -1.57, -1.27, 0.95, 0.06), mats.carpet());
+  shelf.name = 'trunk_bay:shelf';
   b.root.add(shelf);
+  b.registerPick('trunk_bay', shelf);
   b.shell.push(shelf);
-  const tfloor = new Mesh(new BoxGeometry(0.66, 0.02, 1.2), mats.carpet());
-  tfloor.position.set(-1.63, 0.34, 0);
+  const tfloor = new Mesh(bayFloorGeometry(loft, -1.96, -1.3, 0.34), mats.carpet());
+  tfloor.name = 'trunk_bay:floor';
   b.root.add(tfloor);
   b.registerPick('trunk_bay', tfloor);
   b.shell.push(tfloor);
   const spare = new Mesh(new CylinderGeometry(0.3, 0.3, 0.1, 32), mats.spare());
+  spare.name = 'trunk_bay:spare';
   spare.position.set(-1.65, 0.4, 0);
   b.root.add(spare);
   b.registerPick('trunk_bay', spare);
@@ -593,7 +927,8 @@ function buildBays(b: Builder, loft: BodyLoft, spec: SedanSpec): void {
 }
 
 // ---------- салон ----------
-function buildInterior(b: Builder, loft: BodyLoft): void {
+function buildInterior(b: Builder, loft: BodyLoft, spec: SedanSpec): void {
+  const e81Style = spec.style === 'bmw-e81-2009';
   const g = new Group();
   g.userData.layerGroup = 'interior';
   b.root.add(g);
@@ -611,11 +946,13 @@ function buildInterior(b: Builder, loft: BodyLoft): void {
     add(zone, box(0.4, 0.28, 0.44, 0.03), mats.seatDark(), [-0.02, 0.28, z]);
     b.anchor(zone, g, [-0.15, 0.85, z]);
   }
-  // задний диван
-  add('seat_r', box(0.48, 0.13, 1.3, 0.04), mats.seat(), [-0.93, 0.44, 0]);
-  add('seat_r', box(0.12, 0.5, 1.3, 0.04), mats.seat(), [-1.15, 0.68, 0], [0, 0, 0.18]);
-  add('seat_r', box(0.4, 0.28, 1.2, 0.03), mats.seatDark(), [-0.93, 0.28, 0]);
-  for (const z of [-0.36, 0, 0.36]) add('seat_r', box(0.07, 0.13, 0.2, 0.03), mats.seatDark(), [-1.2, 0.98, z], [0, 0, 0.18]);
+  // Rear bench: two places in the four-seat E81, three in the shared five-seat sedan templates.
+  const rearSeatWidth = e81Style ? 0.96 : 1.3;
+  const rearHeadrests = e81Style ? [-0.27, 0.27] : [-0.36, 0, 0.36];
+  add('seat_r', box(0.48, 0.13, rearSeatWidth, 0.04), mats.seat(), [-0.93, 0.44, 0]);
+  add('seat_r', box(0.12, 0.5, rearSeatWidth, 0.04), mats.seat(), [-1.15, 0.68, 0], [0, 0, 0.18]);
+  add('seat_r', box(0.4, 0.28, rearSeatWidth - 0.1, 0.03), mats.seatDark(), [-0.93, 0.28, 0]);
+  for (const z of rearHeadrests) add('seat_r', box(0.07, 0.13, 0.2, 0.03), mats.seatDark(), [-1.2, 0.98, z], [0, 0, 0.18]);
   b.anchor('seat_r', g, [-1.05, 0.8, 0]);
 
   // торпедо
@@ -627,8 +964,15 @@ function buildInterior(b: Builder, loft: BodyLoft): void {
   add('dashboard', box(0.06, 0.14, 0.34, 0.02), mats.trim(), [0.42, 0.86, -0.36]); // приборка
   add('console', box(0.12, 0.18, 0.4, 0.02), mats.trim(), [0.42, 0.8, 0.05]); // магнитола
   add('console', box(0.75, 0.22, 0.2, 0.03), mats.dash(), [0.02, 0.32, 0]);
-  add('console', new CylinderGeometry(0.014, 0.016, 0.16, 10), mats.trim(), [0.16, 0.5, 0]);
-  add('console', new SphereGeometry(0.03, 12, 10), mats.trim(), [0.16, 0.6, 0]);
+  if (e81Style) {
+    // Steptronic selector rather than the shared manual-style lever.
+    add('console', box(0.24, 0.055, 0.2, 0.025), mats.trim(), [0.1, 0.42, 0]);
+    add('console', box(0.055, 0.18, 0.052, 0.018), mats.trim(), [0.16, 0.53, 0]);
+    add('console', box(0.09, 0.065, 0.075, 0.022), mats.chrome(), [0.16, 0.64, 0]);
+  } else {
+    add('console', new CylinderGeometry(0.014, 0.016, 0.16, 10), mats.trim(), [0.16, 0.5, 0]);
+    add('console', new SphereGeometry(0.03, 12, 10), mats.trim(), [0.16, 0.6, 0]);
+  }
   b.anchor('dashboard', g, [0.5, 0.92, 0.3]);
   b.anchor('console', g, [0.3, 0.62, 0.08]);
 
@@ -705,17 +1049,20 @@ function buildMech(b: Builder, spec: SedanSpec): void {
   b.anchor('susp_f', g, [spec.frontAxleX, 0.85, -0.6]);
   b.anchor('susp_r', g, [spec.rearAxleX, 0.72, -0.6]);
   // выхлоп
+  const exhaustSide = spec.exhaustSide ?? 1;
+  const exhaustZ = (z: number) => z * exhaustSide;
+  const exhaustTailX = spec.style === 'bmw-e81-2009' ? spec.xRear + 0.055 : -2.18;
   const curve = new CatmullRomCurve3([
-    new Vector3(1.05, 0.3, 0.32),
-    new Vector3(0.6, 0.14, 0.3),
-    new Vector3(-0.6, 0.11, 0.12),
-    new Vector3(-1.5, 0.13, 0.15),
-    new Vector3(-1.85, 0.2, 0.3),
-    new Vector3(-2.18, 0.28, 0.36),
+    new Vector3(1.05, 0.3, exhaustZ(0.32)),
+    new Vector3(0.6, 0.14, exhaustZ(0.3)),
+    new Vector3(-0.6, 0.11, exhaustZ(0.12)),
+    new Vector3(-1.5, 0.13, exhaustZ(0.15)),
+    new Vector3(-1.85, 0.2, exhaustZ(0.3)),
+    new Vector3(exhaustTailX, 0.28, exhaustZ(0.36)),
   ]);
   add('exhaust', new TubeGeometry(curve, 40, 0.032, 10, false), mats.exhaust(), [0, 0, 0]);
-  add('exhaust', new CylinderGeometry(0.1, 0.1, 0.75, 20), mats.exhaust(), [-1.75, 0.2, 0.3], [0, 0, Math.PI / 2]);
-  b.anchor('exhaust', g, [-1.0, 0.1, 0.12]);
+  add('exhaust', new CylinderGeometry(0.1, 0.1, 0.75, 20), mats.exhaust(), [-1.75, 0.2, exhaustZ(0.3)], [0, 0, Math.PI / 2]);
+  b.anchor('exhaust', g, [-1.0, 0.1, exhaustZ(0.12)]);
   // бак
   add('fuel_tank', box(0.9, 0.17, 0.62, 0.05), mats.tank(), [-0.62, 0.12, 0]);
   b.anchor('fuel_tank', g, [-0.62, 0.05, 0]);

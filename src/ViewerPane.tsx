@@ -16,6 +16,9 @@ const VIEWS: [string, string][] = [
   ['under', 'Снизу'],
   ['cabin', 'Из салона'],
 ];
+const LIGHTING: Array<['studio' | 'daylight' | 'inspection', string]> = [
+  ['studio', 'Студия'], ['daylight', 'Дневной свет'], ['inspection', 'Осмотр'],
+];
 
 export function ViewerPane() {
   const host = useRef<HTMLDivElement>(null);
@@ -47,6 +50,7 @@ export function ViewerPane() {
         viewerCommands.toggleOpen = (z) => v.toggleOpen(z);
         viewerCommands.setAllOpen = (o) => v.setAllOpen(o);
         viewerCommands.view = (p) => v.view(p as never);
+        viewerCommands.lighting = (preset) => v.setLightingPreset(preset);
         if (import.meta.env.DEV) (window as unknown as { __viewer: Viewer }).__viewer = v;
 
         let lastCar = '';
@@ -62,6 +66,8 @@ export function ViewerPane() {
             v.setModel(getModel(car.modelId), ui.previewColor.value ?? car.color);
           }),
           effect(() => v.setLayer(ui.layer.value)),
+          effect(() => v.setBlueprint(ui.blueprint.value)),
+          effect(() => v.setLightingPreset(ui.lightingPreset.value)),
           effect(() => v.setSelected(ui.selectedZone.value)),
           effect(() => {
             const editId = ui.draft.value?.editId;
@@ -122,6 +128,23 @@ export function ViewerPane() {
           ariaLabel="Ракурс камеры"
           items={VIEWS.map(([id, label]) => ({ label, onSelect: () => viewerCommands.view?.(id) }))}
         />
+        <Menu
+          up
+          class="btn-glass"
+          label="Свет ▴"
+          title="Визуальные пресеты, не измеренный режим освещения"
+          ariaLabel="Пресет освещения 3D-модели"
+          items={LIGHTING.map(([id, label]) => ({ label, active: ui.lightingPreset.value === id, hint: ui.lightingPreset.value === id ? 'выбран' : undefined, onSelect: () => (ui.lightingPreset.value = id) }))}
+        />
+        <button
+          type="button"
+          class={`btn btn-glass blueprint-toggle ${ui.blueprint.value ? 'btn-blueprint-on' : ''}`}
+          aria-pressed={ui.blueprint.value}
+          title="Полупрозрачная модель с пунктирными рёбрами геометрии"
+          onClick={() => (ui.blueprint.value = !ui.blueprint.value)}
+        >
+          Чертёж
+        </button>
         <Menu
           up
           class="btn-glass"

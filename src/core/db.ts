@@ -3,7 +3,7 @@
  * поэтому, например, «закрыть дефект + записать в журнал» атомарно.
  * Есть in-memory реализация (для тестов и на случай, когда IndexedDB недоступна).
  */
-export const STORES = ['cars', 'issues', 'tasks', 'logs', 'attachments', 'blobs', 'meta', 'models', 'modelfiles'] as const;
+export const STORES = ['cars', 'issues', 'tasks', 'logs', 'mileages', 'inspections', 'diagnostics', 'attachments', 'blobs', 'meta', 'models', 'modelfiles'] as const;
 /** Хранилища, которые НЕ очищаются при «заменить все данные» при импорте (настройки приложения). */
 const KEEP_ON_CLEAR: readonly string[] = ['meta', 'models', 'modelfiles'];
 export type StoreName = (typeof STORES)[number];
@@ -19,7 +19,7 @@ export interface Storage {
 }
 
 const DB_NAME = 'shtbox';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 const wrap = <T>(req: IDBRequest<T>) =>
   new Promise<T>((res, rej) => {

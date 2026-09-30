@@ -10,7 +10,7 @@ const opt = (n: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 if (pos.length < 2) {
-  console.error('Использование: npm run import:model -- <in.glb> <out.glb> [--title X] [--hint JSON] [--author A] [--license L] [--source URL] [--budget N]');
+  console.error('Использование: npm run import:model -- <in.glb> <out.glb> [--title X] [--hint JSON] [--author A] [--license L] [--source URL] [--budget N] [--keep-textures]');
   process.exit(2);
 }
 const [src, out] = pos;
@@ -22,6 +22,7 @@ const r = await processModel(new Uint8Array(readFileSync(src)), {
   hint,
   credits,
   budget: opt('budget') ? Number(opt('budget')) : undefined,
+  preserveTextures: args.includes('--keep-textures'),
 });
 writeFileSync(out, r.glb);
 const p = r.profile;

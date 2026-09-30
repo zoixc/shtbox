@@ -100,6 +100,8 @@ export function buildImportedParts(scene: Object3D, pr: Profile, color: string):
   const f = xform(pr.frame);
   const acc: Acc = { zones: new Map() };
   const budget = { left: SPLIT_BUDGET };
+  // Модельные контуры требуют более мелких треугольников у линии разреза, чем общий plane-cut.
+  const cutResolution = pr.panelRegions?.length ? 0.01 : 0.025;
   const valid = (z: string | undefined): z is string => !!z && zdef.has(remapZone(z, pr.body));
 
   scene.updateMatrixWorld(true);
@@ -124,7 +126,7 @@ export function buildImportedParts(scene: Object3D, pr: Profile, color: string):
     }
     const tri = (fn: (c: Vec3, n: Vec3) => string, sub: boolean) => {
       const out = new Map<string, Soup>();
-      splitInto(s.pos, s.nor, fn, out, budget, sub ? 0.025 : 1e9);
+      splitInto(s.pos, s.nor, fn, out, budget, sub ? cutResolution : 1e9);
       for (const [z, soup] of out) addSoup(acc, put(z), key, soup);
     };
     switch (info.k) {

@@ -15,8 +15,9 @@ function Thumb({ a }: { a: Attachment }) {
 }
 
 /** Ряд миниатюр + кнопка «добавить фото». Файлы сжимаются и очищаются от EXIF на устройстве. */
-export function Photos(props: { type: AttachmentOwner; id: string; addLabel?: string }) {
-  const list = store.attachmentsByOwner.value.get(`${props.type}:${props.id}`) ?? [];
+export function Photos(props: { type: AttachmentOwner; id: string; addLabel?: string; phase?: 'before' | 'after' }) {
+  const all = store.attachmentsByOwner.value.get(`${props.type}:${props.id}`) ?? [];
+  const list = props.phase ? all.filter((a) => a.phase === props.phase) : all;
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
 
@@ -29,7 +30,7 @@ export function Photos(props: { type: AttachmentOwner; id: string; addLabel?: st
     try {
       for (const f of files) {
         try {
-          await store.addAttachment(props.type, props.id, await compressImage(f));
+          await store.addAttachment(props.type, props.id, await compressImage(f), props.phase);
         } catch (ex) {
           if (ex instanceof ValidationError) toast(ex.message, 'err');
           else await guard(Promise.reject(ex));

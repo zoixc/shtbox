@@ -11,6 +11,8 @@ import { Chip, Empty, Menu, Section } from './common';
 import { LogForm, TaskForm } from './forms';
 import { IssueItem, LogItem, TaskItem } from './items';
 import { zoneLabel } from '../state';
+import { MileageHistory } from './Mileage';
+import { InspectionsPanel, DiagnosticsPanel } from './VehicleRecords';
 
 export function ZoneList() {
   const model = activeModel();
@@ -79,6 +81,7 @@ export function TasksTab() {
   };
   return (
     <div>
+      <MileageHistory />
       <div class="tab-actions">
         <button class="btn btn-primary" onClick={() => setAdding(true)}>+ Регламентная работа</button>
         {missing.length > 0 && !tasks.length && <button class="btn" onClick={addMissing}>Типовой регламент ({missing.length})</button>}
@@ -132,6 +135,8 @@ export function LogTab() {
 
   return (
     <div>
+      <InspectionsPanel />
+      <DiagnosticsPanel />
       <div class="tab-actions">
         <button class="btn btn-primary" onClick={() => setAdding(true)}>+ Записать работу</button>
         <Menu align="right" class="btn-ghost push-right" label="⋯" ariaLabel="Ещё" items={[{ label: 'Экспорт журнала (CSV)', onSelect: () => (list.length ? exportCsv() : toast('В журнале пока пусто.', 'err')) }]} />

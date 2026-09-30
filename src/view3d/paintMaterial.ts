@@ -196,7 +196,7 @@ export function getFx(m: Material): PaintFx | undefined {
 }
 
 /** Материал краски с шейдерными повреждениями. */
-export type PaintFinish = 'gloss' | 'satin';
+export type PaintFinish = 'gloss' | 'satin' | 'matte';
 
 /**
  * Параметры лака. «gloss» — для гладких процедурных панелей; «satin» — для моделей из файлов
@@ -205,6 +205,7 @@ export type PaintFinish = 'gloss' | 'satin';
 const FINISH: Record<PaintFinish, { metalness: number; roughness: number; clearcoat: number; clearcoatRoughness: number; envMapIntensity: number }> = {
   gloss: { metalness: 0.35, roughness: 0.34, clearcoat: 0.9, clearcoatRoughness: 0.08, envMapIntensity: 1.0 },
   satin: { metalness: 0.08, roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.3, envMapIntensity: 0.55 },
+  matte: { metalness: 0.025, roughness: 0.63, clearcoat: 0.1, clearcoatRoughness: 0.45, envMapIntensity: 0.38 },
 };
 
 export function createPaintMaterial(color: number | string, finish: PaintFinish = 'gloss'): MeshPhysicalMaterial {

@@ -6,6 +6,8 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
+  LineDashedMaterial,
+  LineSegments,
   Material,
   Mesh,
   MeshBasicMaterial,
@@ -17,12 +19,14 @@ import {
   Raycaster,
   SRGBColorSpace,
   Scene,
+  Texture,
   Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { createBlueprintEdges } from './blueprint';
 import type { Issue, Spot } from '../core/types';
 import { BODY_KINDS } from '../core/types';
 import type { ZoneSummary } from '../core/store';
@@ -31,6 +35,7 @@ import { SpotType, globalTime, setHighlight, setSpots, updateNormalMatrix } from
 import type { SpotTypeId } from './paintMaterial';
 
 export type ViewPreset = 'iso' | 'front' | 'rear' | 'left' | 'right' | 'top' | 'under' | 'cabin';
+export type LightingPreset = 'studio' | 'daylight' | 'inspection';
 
 export interface ViewerEvents {
   /** клик по узлу (или пустому месту → null) */
@@ -95,6 +100,19 @@ export class Viewer {
   private camAnim: { t: number; dur: number; fromP: Vector3; toP: Vector3; fromT: Vector3; toT: Vector3 } | null = null;
   private zoneMeshes = new Map<string, Mesh[]>();
   private ghostBase = new WeakMap<Material, { opacity: number; transparent: boolean; depthWrite: boolean }>();
+  private environmentMap!: Texture;
+  private hemiLight!: HemisphereLight;
+  private ambientLight!: AmbientLight;
+  private keyLight!: DirectionalLight;
+  private rimLight!: DirectionalLight;
+  private lightingPreset: LightingPreset = 'studio';
+  private groundSurface!: Mesh;
+  private groundShadow!: Mesh;
+  private blueprint = false;
+  private blueprintMaterial: LineDashedMaterial | null = null;
+  private blueprintLines = new Map<Mesh, LineSegments>();
+  private blueprintBuildToken = 0;
+  private blueprintBuilding = false;
   private pointerDown: { x: number; y: number; t: number } | null = null;
   private tmp = new Vector3();
   private tmpQ = new Quaternion();
@@ -122,18 +140,22 @@ export class Viewer {
     container.appendChild(this.tooltip);
 
     const pmrem = new PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const environmentScene = new RoomEnvironment();
+    this.environmentMap = pmrem.fromScene(environmentScene, 0.04).texture;
+    environmentScene.dispose();
+    this.scene.environment = this.environmentMap;
     pmrem.dispose();
-    this.scene.add(new HemisphereLight(0xdfe9ff, 0x2a2f38, 0.35));
-    this.scene.add(new AmbientLight(0xffffff, 0.15));
-    const sun = new DirectionalLight(0xffffff, 1.6);
-    sun.position.set(3, 6, 4);
-    this.scene.add(sun);
-    const rim = new DirectionalLight(0x9fc4ff, 0.7);
-    rim.position.set(-4, 3, -3);
-    this.scene.add(rim);
+    this.hemiLight = new HemisphereLight(0xdfe9ff, 0x2a2f38, 0.35);
+    this.ambientLight = new AmbientLight(0xffffff, 0.15);
+    this.keyLight = new DirectionalLight(0xffffff, 1.6);
+    this.keyLight.position.set(3, 6, 4);
+    this.rimLight = new DirectionalLight(0x9fc4ff, 0.7);
+    this.rimLight.position.set(-4, 3, -3);
+    this.scene.add(this.hemiLight, this.ambientLight, this.keyLight, this.rimLight);
     this.scene.add(this.carGroup);
-    this.scene.add(this.makeGroundShadow());
+    this.groundSurface = this.makeGroundSurface();
+    this.groundShadow = this.makeGroundShadow();
+    this.scene.add(this.groundSurface, this.groundShadow);
 
     this.camera.position.set(4.6, 2.2, 5);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -183,6 +205,7 @@ export class Viewer {
       }
       rig.setColor(this.color);
       this.rig = rig;
+      this.fitGroundToRig(rig);
       this.carGroup.add(rig.root);
       this.zoneMeshes.clear();
       for (const [zone, objs] of rig.pick) {
@@ -191,6 +214,7 @@ export class Viewer {
         this.zoneMeshes.set(zone, list);
       }
       this.applyLayer();
+      if (this.blueprint) this.buildBlueprintLines();
       this.applyHighlights();
       if (!opts.keepView) this.view(this.layer === 'body' ? 'iso' : this.layer === 'interior' ? 'cabin-out' : 'mech', true);
       this.spotsInstant = true;
@@ -210,6 +234,7 @@ export class Viewer {
   private clearModel(): void {
     this.token++;
     this.def = null;
+    this.clearBlueprintLines();
     if (!this.rig) return;
     this.carGroup.remove(this.rig.root);
     this.rig.dispose();
@@ -224,6 +249,101 @@ export class Viewer {
   setColor(color: string): void {
     this.rig?.setColor(color);
     this.invalidate();
+  }
+
+  /** Невымеренные визуальные пресеты; студийный свет сохраняет прежние настройки по умолчанию. */
+  setLightingPreset(preset: LightingPreset): void {
+    if (preset === this.lightingPreset) return;
+    this.lightingPreset = preset;
+    if (preset === 'studio') {
+      this.hemiLight.color.set(0xdfe9ff); this.hemiLight.groundColor.set(0x2a2f38); this.hemiLight.intensity = 0.35;
+      this.ambientLight.intensity = 0.15;
+      this.keyLight.color.set(0xffffff); this.keyLight.intensity = 1.6; this.keyLight.position.set(3, 6, 4);
+      this.rimLight.color.set(0x9fc4ff); this.rimLight.intensity = 0.7; this.rimLight.position.set(-4, 3, -3);
+      this.renderer.toneMappingExposure = 0.85;
+    } else if (preset === 'daylight') {
+      this.hemiLight.color.set(0xcfe7ff); this.hemiLight.groundColor.set(0x6f6b63); this.hemiLight.intensity = 0.7;
+      this.ambientLight.intensity = 0.22;
+      this.keyLight.color.set(0xfff4df); this.keyLight.intensity = 1.55; this.keyLight.position.set(-3, 8, 4);
+      this.rimLight.color.set(0xb2d8ff); this.rimLight.intensity = 0.35; this.rimLight.position.set(4, 2, -5);
+      this.renderer.toneMappingExposure = 0.9;
+    } else {
+      this.hemiLight.color.set(0xe6edf4); this.hemiLight.groundColor.set(0x777777); this.hemiLight.intensity = 0.65;
+      this.ambientLight.intensity = 0.4;
+      this.keyLight.color.set(0xffffff); this.keyLight.intensity = 1.1; this.keyLight.position.set(0, 8, 1);
+      this.rimLight.color.set(0xffffff); this.rimLight.intensity = 0.45; this.rimLight.position.set(-5, 2, -3);
+      this.renderer.toneMappingExposure = 0.92;
+    }
+    this.invalidate();
+  }
+
+  /** Переключает полупрозрачный режим со штриховыми рёбрами геометрии (это не OEM-швы). */
+  setBlueprint(enabled: boolean): void {
+    if (enabled === this.blueprint) return;
+    this.blueprint = enabled;
+    if (!enabled) for (const line of this.blueprintLines.values()) line.visible = false;
+    this.applyLayer();
+    if (enabled) this.buildBlueprintLines();
+    this.invalidate();
+  }
+
+  private buildBlueprintLines(): void {
+    const rig = this.rig;
+    if (!rig || this.blueprintBuilding || this.blueprintLines.size) return;
+    this.blueprintMaterial ??= new LineDashedMaterial({
+      color: 0x70dcff,
+      dashSize: 0.055,
+      gapSize: 0.035,
+      opacity: 0.94,
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const token = ++this.blueprintBuildToken;
+    this.blueprintBuilding = true;
+    const meshes = [...new Set(rig.paint.values())];
+    window.setTimeout(() => void this.buildBlueprintLinesInFrames(rig, token, meshes), 0);
+  }
+
+  private async buildBlueprintLinesInFrames(rig: ModelRig, token: number, meshes: Mesh[]): Promise<void> {
+    try {
+      for (const mesh of meshes) {
+        if (token !== this.blueprintBuildToken || rig !== this.rig || this.disposed) return;
+        const source = mesh.geometry.getAttribute('position');
+        if (mesh.isMesh && source) {
+          try {
+            const edges = createBlueprintEdges(mesh.geometry);
+            if (edges) {
+              const line = new LineSegments(edges, this.blueprintMaterial!);
+              line.name = `${mesh.name}:blueprint`;
+              line.renderOrder = 2;
+              line.visible = this.blueprint;
+              line.raycast = () => {};
+              line.computeLineDistances();
+              mesh.add(line);
+              this.blueprintLines.set(mesh, line);
+              this.invalidate();
+            }
+          } catch (error) {
+            console.warn('Не удалось построить линии blueprint для детали', mesh.name, error);
+          }
+        }
+        // Yield between panels so a large model does not freeze input for the whole build.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+    } finally {
+      if (token === this.blueprintBuildToken) this.blueprintBuilding = false;
+    }
+  }
+
+  private clearBlueprintLines(): void {
+    this.blueprintBuildToken++;
+    this.blueprintBuilding = false;
+    for (const [mesh, line] of this.blueprintLines) {
+      mesh.remove(line);
+      line.geometry.dispose();
+    }
+    this.blueprintLines.clear();
   }
 
   // ---------- слои ----------
@@ -254,7 +374,11 @@ export class Viewer {
           this.ghostBase.set(mat, base);
         }
         const isLine = (o as Object3D & { isLineSegments?: boolean }).isLineSegments;
-        if (ghost) {
+        if (this.blueprint) {
+          mat.transparent = true;
+          mat.depthWrite = false;
+          mat.opacity = base.opacity * (ghost ? 0.1 : isLine ? 0.3 : 0.2);
+        } else if (ghost) {
           mat.transparent = true;
           mat.depthWrite = false;
           mat.opacity = base.opacity * (isLine ? 0.35 : 0.08);
@@ -266,6 +390,7 @@ export class Viewer {
         mat.needsUpdate = true;
       }
     }
+    for (const line of this.blueprintLines.values()) line.visible = this.blueprint;
     rig.root.traverse((o) => {
       if (o.userData.inner) o.visible = !ghost;
       if (o.userData.layerGroup === 'interior') o.visible = this.layer !== 'mech';
@@ -714,6 +839,25 @@ export class Viewer {
     }
   };
 
+  /** Матовая полупрозрачная плоскость даёт зрительную опору, не создавая тяжёлого пола с текстурами. */
+  private makeGroundSurface(): Mesh {
+    const material = new MeshBasicMaterial({ color: 0x607186, transparent: true, opacity: 0.14, depthWrite: false, toneMapped: false });
+    const surface = new Mesh(new PlaneGeometry(160, 160), material);
+    surface.rotation.x = -Math.PI / 2;
+    surface.position.y = -0.012;
+    surface.renderOrder = -2;
+    return surface;
+  }
+
+  /** Подгоняет пятно контакта под габариты и центр конкретной модели. */
+  private fitGroundToRig(rig: ModelRig): void {
+    const [x, , z] = rig.bounds.center;
+    const scale = Math.max(0.75, rig.bounds.radius / 2.4);
+    this.groundSurface.position.set(x, -0.012, z);
+    this.groundShadow.position.set(x, -0.008, z);
+    this.groundShadow.scale.set(scale, 1, scale);
+  }
+
   private makeGroundShadow(): Mesh {
     const c = document.createElement('canvas');
     c.width = c.height = 256;
@@ -726,9 +870,9 @@ export class Viewer {
     g.fillRect(0, 0, 256, 256);
     const tex = new CanvasTexture(c);
     tex.colorSpace = SRGBColorSpace;
-    const m = new Mesh(new PlaneGeometry(6.4, 3.2), new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    const m = new Mesh(new PlaneGeometry(6.4, 3.2), new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }));
     m.rotation.x = -Math.PI / 2;
-    m.position.y = 0.002;
+    m.position.y = -0.008;
     m.renderOrder = -1;
     return m;
   }
@@ -739,6 +883,15 @@ export class Viewer {
     this.ro.disconnect();
     this.controls.dispose();
     this.clearModel();
+    this.blueprintMaterial?.dispose();
+    this.groundSurface.geometry.dispose();
+    (this.groundSurface.material as MeshBasicMaterial).dispose();
+    this.groundShadow.geometry.dispose();
+    const shadowMaterial = this.groundShadow.material as MeshBasicMaterial;
+    shadowMaterial.map?.dispose();
+    shadowMaterial.dispose();
+    this.scene.environment = null;
+    this.environmentMap.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.overlay.remove();

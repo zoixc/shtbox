@@ -7,10 +7,12 @@ import { BufferGeometry, DoubleSide, Matrix4, Mesh, MeshBasicMaterial, Object3D,
 import type { Viewer } from '../view3d/Viewer';
 import { uid } from '../core/id';
 import { patchProfile, splitGlb } from '../import/container';
+import { estimatePreservedTextures } from '../import/texture-estimate';
 import { ImportSession } from '../import/client';
 import type { ImportOutcome } from '../import/client';
+import { ImportCancelledError } from '../import/client';
 import type { AnalyzeHint } from '../import/analyze';
-import type { BodyType, Kind, Lines, PartInfo, Profile } from '../import/types';
+import type { BodyType, DataConfidence, DataProvenance, Kind, Lines, PartInfo, Profile } from '../import/types';
 import { KINDS } from '../import/types';
 import { parseProfile } from '../import/profile';
 import { zonesFor } from '../import/zoneset';
@@ -19,6 +21,7 @@ import { USER_PREFIX, readUserModelFile, saveUserModel, userModels } from '../mo
 import type { CarModelDef } from '../models/types';
 import { guard, store, toast, ui } from '../state';
 import { Field } from './common';
+import { PanelRegionEditor } from './PanelRegionEditor';
 
 const MAX_FILE = 60 * 1024 * 1024;
 type Tab = 'orient' | 'paint' | 'parts' | 'done';
@@ -31,6 +34,10 @@ const TABS: [Tab, string][] = [
 const KIND_LABEL: Record<Kind, string> = {
   paint: 'Окрашиваемая панель', glass: 'Стекло', light: 'Оптика', wheel: 'Колесо', brake: 'Тормоза', trim: 'Накладка / прочее', int: 'Салон', hide: 'Скрыть',
 };
+const PROVENANCE_OPTIONS: [DataProvenance, string][] = [
+  ['auto', 'Автооценка'], ['manual', 'Исправлено вручную'], ['document', 'Сверено с документом'], ['oem', 'Подтверждено OEM'],
+];
+const CONFIDENCE_OPTIONS: [DataConfidence, string][] = [['low', 'Низкая'], ['medium', 'Средняя'], ['high', 'Высокая']];
 const LINE_LABEL: [keyof Lines, string, 'x' | 'y' | 'w'][] = [
   ['cowl', 'Капот ↔ лобовое стекло (X)', 'x'],
   ['doorFront', 'Передний край двери (X)', 'x'],
@@ -46,6 +53,7 @@ const LINE_LABEL: [keyof Lines, string, 'x' | 'y' | 'w'][] = [
 ];
 
 const rad = (d: number) => (d * Math.PI) / 180;
+const mib = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} МиБ`;
 const frameMatrix = (p: Profile) =>
   new Matrix4().compose(new Vector3(...p.frame.offset), new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), rad(p.frame.yaw)), new Vector3(p.frame.scale, p.frame.scale, p.frame.scale));
 
@@ -75,8 +83,11 @@ export default function ImportWizard() {
   const [stats, setStats] = useState<ImportOutcome['stats'] | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [preserveTextures, setPreserveTextures] = useState(false);
+  const [textureEstimate, setTextureEstimate] = useState<{ bytes: number; textures: number; omitted: number } | null>(null);
 
   const sess = useRef<ImportSession | null>(null);
+  const importRun = useRef(0);
   const pkg = useRef<{ glb: Uint8Array; scene: Object3D } | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const viewer = useRef<Viewer | null>(null);
@@ -96,6 +107,7 @@ export default function ImportWizard() {
 
   useEffect(
     () => () => {
+      importRun.current++;
       clearTimeout(timer.current);
       sess.current?.close();
       viewer.current?.dispose();
@@ -219,33 +231,45 @@ export default function ImportWizard() {
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setError('');
+    setTextureEstimate(null);
     if (!/\.glb$/i.test(file.name)) return setError('Нужен файл .glb (бинарный glTF). Другие форматы конвертируются в Blender: File → Export → glTF 2.0 (.glb).');
     if (file.size > MAX_FILE) return setError(`Файл больше ${MAX_FILE >> 20} МБ`);
+    const run = ++importRun.current;
     setPhase('busy');
     setProg({ stage: 'Чтение файла', frac: 0 });
     try {
       const data = await file.arrayBuffer();
+      if (run !== importRun.current) return;
       const s = (sess.current = new ImportSession());
       const title = file.name.replace(/\.(shtcar\.)?glb$/i, '').slice(0, 80);
       // готовый пакет shtbox (экспорт из приложения / CLI): разметка уже есть — берём как есть
       let ready: Profile | null = null;
       try {
-        const raw = (splitGlb(new Uint8Array(data)).json.extras as { shtbox?: unknown } | undefined)?.shtbox;
+        const { json } = splitGlb(new Uint8Array(data));
+        setTextureEstimate(estimatePreservedTextures(json));
+        const raw = (json.extras as { shtbox?: unknown } | undefined)?.shtbox;
         if (raw) ready = parseProfile(raw);
       } catch {
+        setTextureEstimate(null);
         ready = null;
       }
       if (ready) {
         await s.loadPackage(data.slice(0));
+        if (run !== importRun.current) return;
         const p = await parsePackage(data.slice(0));
+        if (run !== importRun.current) return;
         pkg.current = { glb: new Uint8Array(data), scene: p.scene };
         setProfile(ready);
         setName(ready.title || title);
         setPhase('edit');
         return;
       }
-      const r = await s.importFile(data, title, undefined, (stage, frac) => setProg({ stage, frac }));
+      const r = await s.importFile(data, title, undefined, (stage, frac) => {
+        if (run === importRun.current) setProg({ stage, frac });
+      }, { preserveTextures });
+      if (run !== importRun.current) return;
       const p = await parsePackage(r.glb.buffer.slice(r.glb.byteOffset, r.glb.byteOffset + r.glb.byteLength) as ArrayBuffer);
+      if (run !== importRun.current) return;
       pkg.current = { glb: r.glb, scene: p.scene };
       setProfile(r.profile);
       setName(title);
@@ -253,11 +277,21 @@ export default function ImportWizard() {
       setWarnings(r.warnings);
       setPhase('edit');
     } catch (e) {
+      if (run !== importRun.current || e instanceof ImportCancelledError) return;
       sess.current?.close();
       sess.current = null;
       setError(e instanceof Error ? e.message : String(e));
       setPhase('pick');
     }
+  };
+
+  const cancelImport = () => {
+    importRun.current++;
+    sess.current?.close();
+    sess.current = null;
+    setTextureEstimate(null);
+    setError('Импорт отменён. Исходный файл не изменён.');
+    setPhase('pick');
   };
 
   const reanalyze = async (patch: Partial<AnalyzeHint>) => {
@@ -268,6 +302,24 @@ export default function ImportWizard() {
       const next = await sess.current.analyze(name, hintOf(p, patch));
       next.credits = p.credits;
       next.hinges = p.hinges;
+      const maskScale = next.frame.scale / p.frame.scale;
+      next.panelRegions = p.panelRegions?.map((region) => ({
+        ...region,
+        zone: next.body === 'coupe' && region.zone === 'door_rl' ? 'door_fl'
+          : next.body === 'coupe' && region.zone === 'door_rr' ? 'door_fr'
+            : next.body === 'hatch' && region.zone === 'rear_glass' ? 'trunk' : region.zone,
+        minAbsZ: region.minAbsZ === undefined ? undefined : region.minAbsZ * maskScale,
+        points: region.points.map(([x, y]) => [x * maskScale, y * maskScale]),
+      }));
+      next.provenance = {
+        dimensions: p.provenance?.dimensions ?? 'auto',
+        dimensionsConfidence: p.provenance?.dimensionsConfidence ?? 'low',
+        panelBoundaries: p.provenance?.panelBoundaries ?? 'auto',
+        panelBoundariesConfidence: p.provenance?.panelBoundariesConfidence ?? 'low',
+        reference: p.provenance?.reference,
+      };
+      if (patch.length !== undefined) { next.provenance.dimensions = 'manual'; next.provenance.dimensionsConfidence = 'medium'; }
+      if (patch.body !== undefined) { next.provenance.panelBoundaries = 'manual'; next.provenance.panelBoundariesConfidence = 'medium'; }
       setProfile(next);
       rebuild(next);
     } catch (e) {
@@ -277,21 +329,42 @@ export default function ImportWizard() {
     }
   };
 
-  const edit = (fn: (p: Profile) => Profile, now = false) => {
+  const edit = (fn: (p: Profile) => Profile, now = false, provenance?: 'dimensions' | 'panels', render = true) => {
     const p = profRef.current;
     if (!p) return;
     const next = fn(structuredClone(p));
+    if (provenance) {
+      const key = provenance === 'dimensions' ? 'dimensions' : 'panelBoundaries';
+      const confidenceKey = provenance === 'dimensions' ? 'dimensionsConfidence' : 'panelBoundariesConfidence';
+      next.provenance = {
+        dimensions: next.provenance?.dimensions ?? 'auto',
+        dimensionsConfidence: next.provenance?.dimensionsConfidence ?? 'low',
+        panelBoundaries: next.provenance?.panelBoundaries ?? 'auto',
+        panelBoundariesConfidence: next.provenance?.panelBoundariesConfidence ?? 'low',
+        reference: next.provenance?.reference,
+        [key]: 'manual',
+        [confidenceKey]: 'medium',
+      };
+    }
     setProfile(next);
-    if (now) rebuild(next);
-    else scheduleRebuild(next);
+    if (render) {
+      if (now) rebuild(next);
+      else scheduleRebuild(next);
+    }
   };
+
+  const updateProvenance = (patch: Partial<NonNullable<Profile['provenance']>>) => edit((p) => {
+    p.provenance = { dimensions: 'auto', dimensionsConfidence: 'low', panelBoundaries: 'auto', panelBoundariesConfidence: 'low', ...p.provenance, ...patch };
+    return p;
+  }, false, undefined, false);
 
   const setPart = (id: string, patch: Partial<PartInfo>) =>
     edit((p) => {
       p.parts[id] = { ...p.parts[id], ...patch, u: 1 };
+      delete p.parts[id].confidence;
       if (patch.z === '') delete p.parts[id].z;
       return p;
-    }, true);
+    }, true, 'panels');
 
   const save = async () => {
     const p = profRef.current;
@@ -366,6 +439,12 @@ export default function ImportWizard() {
               Выбрать .glb…
               <input type="file" accept=".glb,model/gltf-binary" hidden onChange={(e) => void onFile((e.target as HTMLInputElement).files?.[0])} />
             </label>
+            <label class="check">
+              <input type="checkbox" checked={preserveTextures} onChange={(e) => setPreserveTextures((e.target as HTMLInputElement).checked)} />
+              Сохранять встроенные текстуры кузова
+            </label>
+            <p class="hint">Необязательно: сохраняются встроенные PNG/JPEG/WebP-текстуры цвета и UV-координаты (лимит 32 МиБ). Пакет увеличится примерно на объём сохранённых изображений; во время упаковки дополнительно может понадобиться около 2× этого объёма памяти (до ~64 МиБ), не считая геометрии и исходника. Остальные карты материала остаются упрощёнными; файл не отправляется в сеть.</p>
+            {textureEstimate && <p class="hint" role="status">В этом GLB найдено примерно {mib(textureEstimate.bytes)} поддерживаемых текстур цвета ({textureEstimate.textures} шт.).{textureEstimate.omitted ? ` Ещё ${textureEstimate.omitted} текстур не войдут в лимит.` : ''}</p>}
             {error && <p class="form-error" role="alert">{error}</p>}
             <p class="hint">
               Если у модели есть готовая разметка shtbox (файл «пакет» <code>.shtcar.glb</code> из этого приложения), она подхватится сразу. Формат для Blender —
@@ -378,6 +457,15 @@ export default function ImportWizard() {
           <div class="wizard-body">
             <p>{prog.stage}…</p>
             <progress max={1} value={prog.frac} style="width:100%" />
+            {textureEstimate && <p class="hint" role="status">
+              {preserveTextures
+                ? `Сохранение включено: ${mib(textureEstimate.bytes)} текстур цвета добавят примерно столько же к пакету и около ${mib(textureEstimate.bytes * 2)} временной памяти сверх геометрии.`
+                : `Сохранение выключено. Если включить, в этом GLB будет добавлено около ${mib(textureEstimate.bytes)} текстур; ориентир временной памяти — ещё ${mib(textureEstimate.bytes * 2)} сверх геометрии.`}
+              {textureEstimate.omitted ? ` Ещё ${textureEstimate.omitted} текстур не войдут в лимит.` : ''}
+            </p>}
+            <div class="form-actions">
+              <button class="btn" onClick={cancelImport}>Отменить импорт</button>
+            </div>
           </div>
         )}
 
@@ -416,7 +504,7 @@ export default function ImportWizard() {
                     <Field label="Двигатель">
                       <select value={profile.layout} onChange={(e) => edit((p) => ((p.layout = (e.target as HTMLSelectElement).value as 'front' | 'rear'), p), true)}>
                         <option value="front">Спереди (под капотом)</option>
-                        <option value="rear">Сзади (как у 911)</option>
+                        <option value="rear">Сзади (заднемоторная компоновка)</option>
                       </select>
                     </Field>
                     <Field label="Руль">
@@ -459,19 +547,30 @@ export default function ImportWizard() {
                         return (
                           <label class="field" key={k}>
                             <span class="field-label">{label}: {profile.lines[k].toFixed(2)}</span>
-                            <input type="range" min={lo} max={hi} step="0.01" value={profile.lines[k]} onInput={(e) => edit((p) => ((p.lines[k] = Number((e.target as HTMLInputElement).value)), p))} />
+                            <input type="range" min={lo} max={hi} step="0.01" value={profile.lines[k]} onInput={(e) => edit((p) => ((p.lines[k] = Number((e.target as HTMLInputElement).value)), p), false, 'panels')} />
                           </label>
                         );
                       })}
                     </div>
                   </details>
+                  <PanelRegionEditor
+                    profile={profile}
+                    disabled={busy}
+                    onAdd={(regions) => edit((p) => ((p.panelRegions = [...(p.panelRegions ?? []), ...regions]), p), true, 'panels')}
+                    onDelete={(index) => edit((p) => ((p.panelRegions = (p.panelRegions ?? []).filter((_, i) => i !== index)), p), true, 'panels')}
+                  />
                   <input placeholder="Фильтр деталей…" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
                   <div class="parts">
                     {Object.entries(profile.parts)
                       .filter(([id, i]) => !filter || `${i.n} ${i.m} ${id}`.toLowerCase().includes(filter.toLowerCase()))
                       .map(([id, i]) => (
                         <div key={id} class={`part ${sel === id ? 'part-on' : ''} ${i.k === 'hide' ? 'part-hidden' : ''}`} ref={(el) => void (sel === id && el?.scrollIntoView({ block: 'nearest' }))} onClick={() => setSel(sel === id ? null : id)}>
-                          <div class="part-name" title={`${i.n} · ${i.m}`}>{i.n} <span class="hint">{i.m}</span></div>
+                          <div class="part-name" title={`${i.n} · ${i.m}`}>
+                            {i.n} <span class="hint">{i.m}</span>
+                            <span class="hint" title={i.u ? 'Назначено вручную' : 'Оценка эвристической авторазметки, не измеренная точность'}>
+                              {i.u ? '· вручную' : `· авто: ${CONFIDENCE_OPTIONS.find(([value]) => value === i.confidence)?.[1] ?? 'Низкая уверенность'}`}
+                            </span>
+                          </div>
                           <select value={i.k} onClick={(e) => e.stopPropagation()} onChange={(e) => setPart(id, { k: (e.target as HTMLSelectElement).value as Kind })} aria-label="Тип детали">
                             {KINDS.map((k) => <option value={k} key={k}>{KIND_LABEL[k]}</option>)}
                           </select>
@@ -497,10 +596,37 @@ export default function ImportWizard() {
                     <Field label="Лицензия">
                       <input value={profile.credits?.license ?? ''} maxLength={120} onInput={(e) => edit((p) => ((p.credits = { ...p.credits, license: (e.target as HTMLInputElement).value }), p), false)} />
                     </Field>
-                    <Field label="Источник (ссылка)">
+                    <Field label="Источник модели (ссылка)">
                       <input value={profile.credits?.source ?? ''} maxLength={300} onInput={(e) => edit((p) => ((p.credits = { ...p.credits, source: (e.target as HTMLInputElement).value }), p), false)} />
                     </Field>
                   </div>
+                  <div class="row2">
+                    <Field label="Источник размеров">
+                      <select value={profile.provenance?.dimensions ?? 'auto'} onChange={(e) => updateProvenance({ dimensions: (e.target as HTMLSelectElement).value as DataProvenance })}>
+                        {PROVENANCE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Источник границ панелей">
+                      <select value={profile.provenance?.panelBoundaries ?? 'auto'} onChange={(e) => updateProvenance({ panelBoundaries: (e.target as HTMLSelectElement).value as DataProvenance })}>
+                        {PROVENANCE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <div class="row2">
+                    <Field label="Уверенность в размерах">
+                      <select value={profile.provenance?.dimensionsConfidence ?? 'low'} onChange={(e) => updateProvenance({ dimensionsConfidence: (e.target as HTMLSelectElement).value as DataConfidence })}>
+                        {CONFIDENCE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Уверенность в границах панелей">
+                      <select value={profile.provenance?.panelBoundariesConfidence ?? 'low'} onChange={(e) => updateProvenance({ panelBoundariesConfidence: (e.target as HTMLSelectElement).value as DataConfidence })}>
+                        {CONFIDENCE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="Документ / ссылка для сверки" hint="Указывайте CoC, руководство или источник проверки. Выберите OEM только после фактической сверки.">
+                    <input value={profile.provenance?.reference ?? ''} maxLength={300} onInput={(e) => updateProvenance({ reference: (e.target as HTMLInputElement).value })} />
+                  </Field>
                   {stats && (
                     <p class="hint">
                       Исходно {stats.srcTris.toLocaleString('ru')} треугольников → {stats.tris.toLocaleString('ru')}, деталей: {stats.parts}, пакет {(stats.bytes / 1048576).toFixed(1)} МБ. Модель хранится только на этом устройстве.

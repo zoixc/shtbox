@@ -11,7 +11,7 @@ import { processModel } from './pipeline';
 import type { Profile, RawPart } from './types';
 
 export type WorkerReq =
-  | { type: 'import'; id: number; data: ArrayBuffer; title: string; hint?: AnalyzeHint }
+  | { type: 'import'; id: number; data: ArrayBuffer; title: string; hint?: AnalyzeHint; preserveTextures?: boolean }
   | { type: 'load'; id: number; data: ArrayBuffer }
   | { type: 'analyze'; id: number; title: string; hint: AnalyzeHint };
 
@@ -27,21 +27,24 @@ let parts: RawPart[] = [];
 const avgColor: AvgColor = async (bytes, mime) => {
   if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return null;
   const bmp = await createImageBitmap(new Blob([bytes as BlobPart], { type: mime }));
-  const c = new OffscreenCanvas(8, 8);
-  const g = c.getContext('2d');
-  if (!g) return null;
-  g.drawImage(bmp, 0, 0, 8, 8);
-  bmp.close();
-  const d = g.getImageData(0, 0, 8, 8).data;
-  let r = 0, gr = 0, b = 0, n = 0;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i + 3] < 8) continue;
-    r += d[i];
-    gr += d[i + 1];
-    b += d[i + 2];
-    n++;
+  try {
+    const c = new OffscreenCanvas(8, 8);
+    const g = c.getContext('2d');
+    if (!g) return null;
+    g.drawImage(bmp, 0, 0, 8, 8);
+    const d = g.getImageData(0, 0, 8, 8).data;
+    let r = 0, gr = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 8) continue;
+      r += d[i];
+      gr += d[i + 1];
+      b += d[i + 2];
+      n++;
+    }
+    return n ? [r / n / 255, gr / n / 255, b / n / 255] : null;
+  } finally {
+    bmp.close();
   }
-  return n ? [r / n / 255, gr / n / 255, b / n / 255] : null;
 };
 
 const post = (m: WorkerRes, transfer: Transferable[] = []) => ctx.postMessage(m, transfer);
@@ -54,6 +57,7 @@ ctx.onmessage = async (e: MessageEvent<WorkerReq>) => {
         title: m.title,
         hint: m.hint,
         avgColor,
+        preserveTextures: m.preserveTextures,
         onProgress: (stage, frac) => post({ type: 'progress', id: m.id, stage, frac }),
       });
       parts = r.parts;

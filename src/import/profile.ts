@@ -1,5 +1,5 @@
 import { KINDS, MAX_PARTS } from './types';
-import type { BodyType, Dims, Kind, Lines, PartInfo, Profile, Vec3 } from './types';
+import type { BodyType, DataConfidence, DataProvenance, Dims, Kind, Lines, PanelRegion, PartInfo, Profile, ProfileProvenance, Vec3 } from './types';
 
 const num = (v: unknown, lo = -1000, hi = 1000): number => {
   if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) throw new Error('bad number');
@@ -45,12 +45,64 @@ export function parseProfile(raw: unknown): Profile {
       const p = pr[id];
       if (!KINDS.includes(p.k as Kind)) throw new Error('kind');
       parts[id] = { n: str(p.n), k: p.k as Kind, m: str(p.m) };
+      if (p.confidence !== undefined) {
+        if (p.confidence !== 'low' && p.confidence !== 'medium' && p.confidence !== 'high') throw new Error('part confidence');
+        parts[id].confidence = p.confidence;
+      }
       if (p.z !== undefined) parts[id].z = str(p.z, 40);
       if (p.u) parts[id].u = 1;
     }
     const profile: Profile = {
       v: 1, title: str(o.title), body, layout: o.layout, driver: o.driver, frame, dims, lines, paint, parts,
     };
+    const provenance = o.provenance;
+    if (provenance === undefined) profile.provenance = { dimensions: 'auto', dimensionsConfidence: 'low', panelBoundaries: 'auto', panelBoundariesConfidence: 'low' };
+    else {
+      if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) throw new Error('provenance');
+      const p = provenance as Record<string, unknown>;
+      const valid = (x: unknown): x is DataProvenance => x === 'auto' || x === 'manual' || x === 'document' || x === 'oem';
+      const confidence = (source: DataProvenance, value: unknown): DataConfidence => {
+        if (value === 'low' || value === 'medium' || value === 'high') return value;
+        if (value !== undefined) throw new Error('provenance confidence');
+        return source === 'oem' ? 'high' : source === 'document' || source === 'manual' ? 'medium' : 'low';
+      };
+      if (!valid(p.dimensions) || !valid(p.panelBoundaries)) throw new Error('provenance values');
+      const normalized: ProfileProvenance = {
+        dimensions: p.dimensions,
+        dimensionsConfidence: confidence(p.dimensions, p.dimensionsConfidence),
+        panelBoundaries: p.panelBoundaries,
+        panelBoundariesConfidence: confidence(p.panelBoundaries, p.panelBoundariesConfidence),
+      };
+      if (p.reference !== undefined) normalized.reference = str(p.reference, 300);
+      profile.provenance = normalized;
+    }
+    const regions = o.panelRegions;
+    if (regions !== undefined) {
+      if (!Array.isArray(regions) || regions.length > 48) throw new Error('panel regions');
+      profile.panelRegions = regions.map((rawRegion) => {
+        const r = rawRegion as Record<string, unknown>;
+        if (!r || typeof r !== 'object' || (r.projection !== 'side' && r.projection !== 'top')) throw new Error('panel region');
+        if (!Array.isArray(r.points) || r.points.length < 3 || r.points.length > 64) throw new Error('panel points');
+        const points = r.points.map((point) => {
+          if (!Array.isArray(point) || point.length !== 2) throw new Error('panel point');
+          return [num(point[0]), num(point[1])] as [number, number];
+        });
+        const zone = str(r.zone, 40);
+        if (!zone.trim()) throw new Error('panel zone');
+        const region: PanelRegion = { zone, projection: r.projection, points };
+        if (r.side !== undefined) {
+          if (r.side !== 'left' && r.side !== 'right' && r.side !== 'both') throw new Error('panel side');
+          region.side = r.side;
+        }
+        if (r.minAbsZ !== undefined) region.minAbsZ = num(r.minAbsZ, 0, 100);
+        if (r.minNormalY !== undefined) region.minNormalY = num(r.minNormalY, 0, 1);
+        if (r.kinds !== undefined) {
+          if (!Array.isArray(r.kinds) || r.kinds.length > 3 || r.kinds.some((k) => k !== 'paint' && k !== 'glass' && k !== 'trim')) throw new Error('panel kinds');
+          region.kinds = [...new Set(r.kinds as Array<'paint' | 'glass' | 'trim'>)];
+        }
+        return region;
+      });
+    }
     const c = o.credits as Record<string, unknown> | undefined;
     if (c && typeof c === 'object') {
       profile.credits = {};

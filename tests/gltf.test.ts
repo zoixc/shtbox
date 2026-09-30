@@ -53,7 +53,16 @@ describe('glTF → ModelRig', () => {
     expect(parseOpen({ axis: [0, 1], angle: 1 })).toBeNull();
     expect(parseOpen({ axis: [0, 1, 0], angle: 99 })).toBeNull();
     expect(() => assertSafeModelUrl('/models/car.glb')).not.toThrow();
-    for (const bad of ['https://evil.example/x.glb', '/models/../x.glb', '//evil/x.glb', '/models/x.js', 'models/x.glb']) expect(() => assertSafeModelUrl(bad)).toThrow();
+    expect(() => assertSafeModelUrl(`/models/car.glb?v=${'a'.repeat(64)}`)).not.toThrow();
+    for (const bad of [
+      'https://evil.example/x.glb',
+      '/models/../x.glb',
+      '//evil/x.glb',
+      '/models/x.js',
+      'models/x.glb',
+      '/models/x.glb?v=short',
+      '/models/x.glb?url=https://evil.example/x.glb',
+    ]) expect(() => assertSafeModelUrl(bad)).toThrow();
   });
 
   it('GLTFLoader (GLB) keeps node extras as userData', async () => {

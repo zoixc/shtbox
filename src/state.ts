@@ -4,7 +4,7 @@ import { openStorage } from './core/db';
 import type { IssueKind, Spot } from './core/types';
 import type { Layer } from './models/types';
 import { getModel, hasModel } from './models/registry';
-import { isUserModel, loadUserModels } from './models/user';
+import { loadUserModels } from './models/user';
 
 export let store: Store;
 
@@ -34,6 +34,8 @@ export interface Draft {
 
 export const ui = {
   layer: signal<Layer>('body'),
+  blueprint: signal(false),
+  lightingPreset: signal<'studio' | 'daylight' | 'inspection'>('studio'),
   selectedZone: signal<string | null>(null),
   tab: signal<SidebarTab>('zone'),
   openZones: signal<string[]>([]),
@@ -41,7 +43,7 @@ export const ui = {
   placing: signal(false),
   /** радиус метки на кузове, м */
   radius: signal(0.08),
-  dialog: signal<null | 'car-new' | 'car-edit' | 'backup' | 'help' | 'models' | 'import'>(null),
+  dialog: signal<null | 'car-new' | 'car-edit' | 'backup' | 'help' | 'models' | 'import' | 'report'>(null),
   /** после мастера импорта вернуться в диалог «Новый автомобиль» и выбрать эту модель */
   /** id модели, разметку которой редактируем в мастере (иначе — новый импорт) */
   editModel: signal<string | null>(null),
@@ -74,10 +76,10 @@ export async function guard<T>(p: Promise<T>): Promise<T | undefined> {
   }
 }
 
-/** Модель пользователя есть в данных авто, но не загружена на этом устройстве (например, после синхронизации). */
-export function missingUserModel(): string | null {
+/** Активная модель неизвестна этому устройству (в том числе после удаления старой встроенной модели). */
+export function missingModel(): string | null {
   const id = store?.activeCar.value?.modelId;
-  return id && isUserModel(id) && !hasModel(id) ? id : null;
+  return id && !hasModel(id) ? id : null;
 }
 
 /** Активная модель автомобиля (по modelId активной машины). */
@@ -112,6 +114,7 @@ export const viewerCommands: {
   toggleOpen?: (zone: string) => void;
   setAllOpen?: (open: boolean) => void;
   view?: (preset: string) => void;
+  lighting?: (preset: 'studio' | 'daylight' | 'inspection') => void;
   openable?: () => { id: string; label: string }[];
 } = {};
 

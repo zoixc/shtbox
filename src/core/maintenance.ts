@@ -1,5 +1,5 @@
 import { addMonths, daysBetween } from './dates';
-import type { DateStr, MaintenanceTask } from './types';
+import type { DateStr, MaintenanceTask, MileageEntry } from './types';
 
 export type DueState = 'ok' | 'soon' | 'overdue' | 'unknown';
 
@@ -21,6 +21,30 @@ export function soonKm(everyKm: number): number {
 }
 export function soonDays(everyMonths: number): number {
   return Math.min(45, Math.max(14, everyMonths * 30 * 0.1));
+}
+
+/**
+ * Усреднённый дневной пробег по датированным одометрам за последние 180 дней.
+ * Требует минимум 7 дней между точками и игнорирует повторы/сбросы показаний.
+ * Значение — ориентировочная скорость для прогноза, не регламентный интервал.
+ */
+export function averageDailyMileage(entries: Pick<MileageEntry, 'date' | 'mileage'>[]): number | undefined {
+  const byDay = new Map<DateStr, number>();
+  for (const item of entries) {
+    if (!Number.isFinite(item.mileage) || item.mileage < 0) continue;
+    byDay.set(item.date, Math.max(byDay.get(item.date) ?? 0, item.mileage));
+  }
+  const points = [...byDay].map(([date, mileage]) => ({ date, mileage })).sort((a, b) => a.date.localeCompare(b.date));
+  const last = points.at(-1);
+  if (!last) return undefined;
+  const window = points.filter((p) => daysBetween(p.date, last.date) <= 180);
+  const first = window[0];
+  if (!first) return undefined;
+  const days = daysBetween(first.date, last.date);
+  const km = last.mileage - first.mileage;
+  if (days < 7 || km <= 0) return undefined;
+  const rate = km / days;
+  return Number.isFinite(rate) && rate <= 1000 ? rate : undefined;
 }
 
 /**

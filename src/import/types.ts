@@ -18,6 +18,8 @@ export interface PartInfo {
   k: Kind;
   /** имя материала */
   m: string;
+  /** уверенность авторазметки; для ручных правок поле не используется */
+  confidence?: DataConfidence;
   /** принудительный узел (перекрывает автоматику) */
   z?: string;
   /** правка сделана пользователем — при повторном анализе сохраняется */
@@ -75,12 +77,42 @@ export interface HingeOverride {
   angle?: number;
 }
 
+/**
+ * Ручной приблизительный контур панели для импортированной оболочки без отдельного меша двери/крышки.
+ * Это проекционная маска, а не подтверждённая заводская/CAD-граница. Точки в координатах авто задают
+ * замкнутую область в боковой или верхней проекции и позволяют заменить прямые пороги `Profile.lines` на контур по кузову.
+ */
+export interface PanelRegion {
+  zone: string;
+  projection: 'side' | 'top';
+  /** side: левая сторона авто = z < 0, правая = z > 0; top: сторона не ограничивается по умолчанию. */
+  side?: 'left' | 'right' | 'both';
+  /** Минимальный |z| для боковой проекции (метры), чтобы маска не затронула центральные детали. */
+  minAbsZ?: number;
+  /** Минимальная составляющая нормали Y для верхней проекции (0..1). */
+  minNormalY?: number;
+  /** Категории поверхностей, к которым применяется контур; по умолчанию paint/glass/trim. */
+  kinds?: Array<'paint' | 'glass' | 'trim'>;
+  /** Замкнутый контур [x,y] для side или [x,z] для top. */
+  points: [number, number][];
+}
+
+export type DataProvenance = 'auto' | 'manual' | 'document' | 'oem';
+export type DataConfidence = 'low' | 'medium' | 'high';
+export interface ProfileProvenance {
+  dimensions: DataProvenance;
+  dimensionsConfidence: DataConfidence;
+  panelBoundaries: DataProvenance;
+  panelBoundariesConfidence: DataConfidence;
+  reference?: string;
+}
+
 export interface Profile {
   v: 1;
   title: string;
   credits?: { author?: string; license?: string; source?: string };
   body: BodyType;
-  /** расположение двигателя: спереди или сзади (911) */
+  /** расположение двигателя: спереди или сзади */
   layout: 'front' | 'rear';
   /** сторона водителя */
   driver: 'l' | 'r';
@@ -91,6 +123,17 @@ export interface Profile {
   paint: string[];
   parts: Record<string, PartInfo>;
   hinges?: Record<string, HingeOverride>;
+  /** Ручные приблизительные проекционные маски панелей (не обязательно совпадают с OEM/CAD-швами). */
+  panelRegions?: PanelRegion[];
+  /** Происхождение размеров и границ, чтобы не выдавать автоматику за заводские данные. */
+  provenance?: ProfileProvenance;
+}
+
+/** Встроенная текстура альбедо; изображение разделяется между деталями, чтобы не дублировать память. */
+export interface RawTexture {
+  id: string;
+  mime: string;
+  image: Uint8Array;
 }
 
 /** Деталь в виде массивов — для анализа, упрощения и сборки (без three.js, работает в Worker и Node). */
@@ -106,6 +149,9 @@ export interface RawPart {
   roughness: number;
   pos: Float32Array;
   nor: Float32Array;
+  /** UV-канал 0 (VEC2), только для включённого сохранения base-color текстур. */
+  uv?: Float32Array;
+  texture?: RawTexture;
   idx: Uint32Array;
 }
 

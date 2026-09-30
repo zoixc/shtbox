@@ -1,6 +1,7 @@
 import type { CarModelDef, TaskTemplate, ZoneDef } from '../types';
 import type { SedanSpec } from '../sedan/build';
 import { SEDAN_ZONES } from '../sedan/solaris';
+import { BMW116I_E81_SPEC, BMW116I_E81_ZONES } from './bmw116i-e81';
 
 /**
  * BMW 116i (F20, 5-дверный хэтчбек, задний привод): упрощённая параметрическая модель.
@@ -79,6 +80,14 @@ export const BMW116I_MAINTENANCE: TaskTemplate[] = [
   { zoneId: 'general', title: 'Антикор / обработка кузова', everyMonths: 24 },
 ];
 
+const E81_NOTE = 'Ориентир для E81 116i с N43 2.0; фактический график сверяйте с BMW CBS, сервисной книжкой и VIN.';
+/** Reuse the generic checklist without carrying F20/N13 or ZF 8HP-specific notes into the E81. */
+export const BMW116I_E81_MAINTENANCE: TaskTemplate[] = BMW116I_MAINTENANCE.map((task) => {
+  if (task.title === 'Замена моторного масла и масляного фильтра') return { ...task, notes: E81_NOTE };
+  if (task.title === 'Замена масла в КПП') return { ...task, notes: '6-ступенчатая Steptronic; тип коробки, жидкость и интервал уточняйте по VIN.' };
+  return task;
+});
+
 /** Основная модель: GLB (кузов, салон, колёса) + процедурные агрегаты, см. `hybrid.ts`. */
 export const bmw116i: CarModelDef = {
   id: 'hatch-bmw116i',
@@ -91,13 +100,13 @@ export const bmw116i: CarModelDef = {
   create: async (color) => (await import('./hybrid')).createBmw116i(color),
 };
 
-/** Лёгкая версия без внешних файлов — для слабых устройств. */
+/** Лёгкая процедурная версия: отдельная трёхдверная модель E81, не гибридный F20 GLB. */
 export const bmw116iLite: CarModelDef = {
   id: 'hatch-bmw116i-lite',
-  name: 'BMW 116i (F20) — облегчённая',
-  description: '5-дверный хэтчбек, задний привод. Параметрическая модель без внешних файлов (лёгкая, работает на любом устройстве).',
+  name: 'BMW 116i E81 (3 двери) — облегчённая',
+  description: '116i 122 Hp Steptronic, 2009–2011, 4 места. Трёхдверный заднеприводный хэтчбек; размеры по Auto-Data, форма кузова приближена по фотографиям и не является OEM/CAD.',
   defaultColor: '#e6e9ec',
-  zones: HATCH_ZONES,
-  defaultMaintenance: BMW116I_MAINTENANCE,
-  create: async (color) => (await import('../sedan/build')).buildSedan(BMW116I_SPEC, color),
+  zones: BMW116I_E81_ZONES,
+  defaultMaintenance: BMW116I_E81_MAINTENANCE,
+  create: async (color) => (await import('../sedan/build')).buildSedan(BMW116I_E81_SPEC, color),
 };

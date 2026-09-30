@@ -14,6 +14,7 @@
 import { Box3, Color, Group, Mesh, Object3D, Vector3 } from 'three';
 import type { Material } from 'three';
 import { createPaintMaterial } from '../view3d/paintMaterial';
+import type { PaintFinish } from '../view3d/paintMaterial';
 import type { ModelRig, OpenableRig, ZoneDef } from './types';
 
 type Vec3 = [number, number, number];
@@ -40,7 +41,7 @@ function hasPaintFlag(m: Object3D, stop: Object3D): boolean {
 }
 
 /** Собирает ModelRig из готовой сцены glTF (чистая функция — удобно тестировать без сети). */
-export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintColor: string): ModelRig {
+export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintColor: string, paintFinish: PaintFinish = 'satin'): ModelRig {
   const byId = new Map(zones.map((z) => [z.id, z]));
   const root = new Group();
   root.add(scene);
@@ -100,7 +101,7 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
     for (const m of meshes) {
       m.userData.zone = id;
       if (paintSet.has(m) && def.paintable) {
-        const pm = createPaintMaterial(paintColor, 'satin');
+        const pm = createPaintMaterial(paintColor, paintFinish);
         // сохраняем прозрачность/двусторонность исходного материала
         const src = m.material as Material;
         if (src && !Array.isArray(src)) pm.side = src.side;
@@ -161,7 +162,10 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
 
 /** Допускаем только файлы с того же origin из /models/ (совпадает с CSP `connect-src 'self'`). */
 export function assertSafeModelUrl(url: string): void {
-  if (!/^\/models\/[\w./-]+\.(glb|gltf)$/.test(url) || url.includes('..')) throw new Error(`Недопустимый путь модели: ${url}`);
+  const [path, query, ...extra] = url.split('?');
+  const safePath = /^\/models\/[\w./-]+\.(glb|gltf)$/.test(path) && !path.includes('..');
+  const safeVersion = query === undefined || /^v=[a-f0-9]{64}$/.test(query);
+  if (!safePath || !safeVersion || extra.length) throw new Error(`Недопустимый путь модели: ${url}`);
 }
 
 export async function loadGltfScene(url: string): Promise<Object3D> {

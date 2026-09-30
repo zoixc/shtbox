@@ -48,6 +48,8 @@ export interface Issue {
   /** ориентировочная стоимость */
   cost?: number;
   spot?: Spot;
+  /** Осмотр, из которого создан дефект. */
+  inspectionId?: ID;
 }
 
 export interface MaintenanceTask {
@@ -82,8 +84,55 @@ export interface LogEntry {
   createdAt: number;
 }
 
+export type MileageSource = 'manual' | 'service' | 'obd';
+export interface MileageEntry {
+  id: ID;
+  carId: ID;
+  date: DateStr;
+  mileage: number;
+  source: MileageSource;
+  notes: string;
+  createdAt: number;
+}
+
+export type InspectionState = 'ok' | 'watch' | 'repair';
+export interface InspectionItem {
+  id: string;
+  title: string;
+  zoneId: string;
+  state: InspectionState;
+  notes: string;
+}
+export interface Inspection {
+  id: ID;
+  carId: ID;
+  date: DateStr;
+  mileage?: number;
+  title: string;
+  notes: string;
+  items: InspectionItem[];
+  createdAt: number;
+}
+
+export interface DiagnosticCode {
+  code: string;
+  description: string;
+  module?: string;
+  status?: string;
+}
+export interface DiagnosticReport {
+  id: ID;
+  carId: ID;
+  date: DateStr;
+  mileage?: number;
+  sourceName: string;
+  notes: string;
+  codes: DiagnosticCode[];
+  createdAt: number;
+}
+
 /** Владелец вложения: фото/чек привязывается к записи. */
-export type AttachmentOwner = 'issue' | 'log' | 'task';
+export type AttachmentOwner = 'issue' | 'log' | 'task' | 'inspection';
 export const ATTACHMENT_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export type AttachmentMime = (typeof ATTACHMENT_MIMES)[number];
 
@@ -93,6 +142,8 @@ export interface Attachment {
   carId: ID;
   ownerType: AttachmentOwner;
   ownerId: ID;
+  /** Для фото осмотра: до ремонта, после ремонта или без этапа. */
+  phase?: 'before' | 'after' | 'general';
   name: string;
   mime: AttachmentMime;
   size: number;
@@ -116,6 +167,10 @@ export interface Backup {
   issues: Issue[];
   tasks: MaintenanceTask[];
   logs: LogEntry[];
+  /** Новые разделы необязательны для совместимости со старыми .shtbox. */
+  mileages?: MileageEntry[];
+  inspections?: Inspection[];
+  diagnostics?: DiagnosticReport[];
   attachments?: BackupAttachment[];
 }
 
