@@ -11,9 +11,9 @@
  *   facing — [x,y,z] в координатах авто: бейдж скрывается, если смотрим с обратной стороны
  * Оси авто: +X — вперёд, +Y — вверх, лево = −Z (в glTF/Blender при экспорте включите «+Y Up»).
  */
-import { Box3, Color, Group, Mesh, Object3D, Vector3 } from 'three';
-import type { Material } from 'three';
-import { createPaintMaterial } from '../view3d/paintMaterial';
+import { Box3, Group, Mesh, Object3D, Vector3 } from 'three';
+import type { Material, MeshPhysicalMaterial } from 'three';
+import { createPaintMaterial, setPaintFinish } from '../view3d/paintMaterial';
 import type { PaintFinish } from '../view3d/paintMaterial';
 import type { ModelRig, OpenableRig, ZoneDef } from './types';
 
@@ -52,7 +52,7 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
   const anchors = new Map<string, Object3D>();
   const facing = new Map<string, Vec3>();
   const shell: Object3D[] = [];
-  const paintMats: { color: Color }[] = [];
+  const paintMats: MeshPhysicalMaterial[] = [];
 
   // узлы с extras.zone (собираем заранее — дальше меняем иерархию)
   const zoneNodes: Object3D[] = [];
@@ -148,6 +148,9 @@ export function rigFromScene(scene: Object3D, zones: readonly ZoneDef[], paintCo
     setColor: (hex) => {
       for (const m of paintMats) m.color.set(hex);
     },
+    setFinish: (finish) => {
+      for (const m of paintMats) setPaintFinish(m, finish);
+    },
     bounds: { center: [center.x, center.y, center.z], radius },
     dispose: () => {
       root.traverse((o) => {
@@ -175,6 +178,6 @@ export async function loadGltfScene(url: string): Promise<Object3D> {
   return gltf.scene;
 }
 
-export async function loadGltfRig(url: string, zones: readonly ZoneDef[], color: string): Promise<ModelRig> {
-  return rigFromScene(await loadGltfScene(url), zones, color);
+export async function loadGltfRig(url: string, zones: readonly ZoneDef[], color: string, finish?: PaintFinish): Promise<ModelRig> {
+  return rigFromScene(await loadGltfScene(url), zones, color, finish);
 }

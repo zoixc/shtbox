@@ -13,7 +13,7 @@ import { solaris } from './sedan/solaris';
 /** Обёртка для моделей из glTF: `defineGltfModel({ ...описание, url: '/models/my-car.glb' })`. */
 export const defineGltfModel = (d: GltfModelDef): CarModelDef => ({
   ...d,
-  create: async (color) => (await import('./gltf')).loadGltfRig(d.url, d.zones, color),
+  create: async (color, finish) => (await import('./gltf')).loadGltfRig(d.url, d.zones, color, finish ?? d.defaultFinish),
 });
 
 const models: CarModelDef[] = [bmw116i, solaris, bmw116iLite];
@@ -42,6 +42,7 @@ function unavailableModel(id: string): CarModelDef {
     name: 'Модель не загружена',
     description: 'Загрузите пакет этой модели, чтобы восстановить 3D-разметку. Записи автомобиля сохранены.',
     defaultColor: '#b9bec6',
+    defaultFinish: 'satin',
     zones: [],
     defaultMaintenance: [],
     create: async () => {
@@ -56,6 +57,7 @@ function unavailableModel(id: string): CarModelDef {
         facing: new Map(),
         shell: [],
         setColor: () => {},
+        windows: new Map(),
         bounds: { center: [0, 0.7, 0], radius: 2.4 },
         dispose: () => {},
       };

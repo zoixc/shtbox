@@ -173,5 +173,5 @@ export const solaris: CarModelDef = {
   defaultColor: '#b9bec6',
   zones: SEDAN_ZONES,
   defaultMaintenance: SOLARIS_MAINTENANCE,
-  create: async (color) => (await import('./build')).buildSedan(SOLARIS_SPEC, color),
+  create: async (color, finish) => (await import('./build')).buildSedan(SOLARIS_SPEC, color, finish),
 };

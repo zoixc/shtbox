@@ -5,6 +5,7 @@
  */
 import { bboxOf, centerOf, sizeOf, transformed, unionBox, yawBox } from './frame';
 import type { Box } from './frame';
+import { detectPanels, trimmedBox } from './seams';
 import type { BodyType, DataConfidence, Dims, Frame, Kind, Lines, PartInfo, Profile, RawPart, Vec3 } from './types';
 
 export interface AnalyzeHint {
@@ -17,6 +18,8 @@ export interface AnalyzeHint {
   layout?: 'front' | 'rear';
   driver?: 'l' | 'r';
   paint?: string[];
+  /** искать капот/двери/крышку/бамперы как отдельные детали модели (по умолчанию — да) */
+  panels?: boolean;
   /** правки пользователя, которые сохраняются при повторном анализе */
   keep?: Record<string, PartInfo>;
 }
@@ -27,6 +30,7 @@ const RE_LIGHT = /light|lamp|head_?l|tail_?l|signal|indicator|blinker|reflector|
 const RE_GLASS = /glass|window|windshield|windscreen|wind_?screen|стекл/i;
 const RE_PAINT = /paint|body|carpaint|lak|exterior|кузов|краск/i;
 const RE_NOT_PAINT = /rubber|tire|tyre|black|plastic|chrome|silver|metal|interior|seat|leather|glass|window|light|lamp|carbon|steel|alu|wheel|rim|disc|brake|license|plate/i;
+const RE_INTERIOR = /interior|int_|cabin|cockpit|seat|sofa|dashboard|dash_?bo|console|armrest|headliner|roof_?liner|upholster|carpet|floor_?mat|steering|door_?card|door_?panel|salon|салон|сидень|кресл|торпедо|обшивк/i;
 const RE_BRAKE = /brake|caliper|rotor/i;
 const RE_WHEEL = /wheel|tire|tyre|rim/i;
 
@@ -102,18 +106,25 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
     return s[1] < 0.02 * Math.max(s[0], s[2]);
   };
   const solid = parts.filter((p) => !flat(B(p)));
-  const U0 = unionBox((solid.length ? solid : parts).map(B));
+  // устойчивые габариты: посторонние объекты сцены (подставка, «пол», стенд) не должны задавать
+  // масштаб, землю и оси — иначе колесо «висит», а высота кузова оказывается вдвое больше реальной
+  const U0 = trimmedBox((solid.length ? solid : parts).map(B));
   const fp = (b: Box) => sizeOf(b)[0] * sizeOf(b)[2];
   for (const p of parts) if (flat(B(p)) && solid.length && fp(B(p)) > 0.5 * fp(U0)) hidden.add(p.id);
   const vis0 = parts.filter((p) => !hidden.has(p.id));
-  const U1 = unionBox(vis0.map(B));
+  const U1 = trimmedBox(vis0.map(B));
   const s1 = sizeOf(U1);
   for (const p of vis0) {
     const s = sizeOf(B(p));
     if (p.alpha < 0.98 && s[0] >= 0.9 * s1[0] && s[1] >= 0.75 * s1[1] && s[2] >= 0.9 * s1[2] && vis0.length > 1) hidden.add(p.id);
   }
+  // детали, лежащие заметно вне облака автомобиля (мусор сцены), не участвуют в разметке
+  const margin: Vec3 = [0.06 * s1[0], 0.06 * s1[1], 0.06 * s1[2]];
+  const outside = (b: Box) =>
+    [0, 1, 2].some((a) => b.max[a] < U1.min[a] - margin[a] || b.min[a] > U1.max[a] + margin[a]);
+  for (const p of vis0) if (!flat(B(p)) && outside(B(p))) hidden.add(p.id);
   const vis = parts.filter((p) => !hidden.has(p.id));
-  const U = unionBox(vis.map(B));
+  const U = trimmedBox(vis.map(B));
 
   // ---------- 2. ориентация ----------
   const ext = sizeOf(U);
@@ -303,7 +314,7 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
     clusters = gap > 0.1 ? 2 : 1;
     doorSplit = clusters === 2 ? at : doorRear;
   }
-  const body: BodyType = hint.body ?? (clusters < 2 ? 'coupe' : rearBase - xRear >= 0.14 * L ? 'sedan' : 'hatch');
+  let body: BodyType = hint.body ?? (clusters < 2 ? 'coupe' : rearBase - xRear >= 0.14 * L ? 'sedan' : 'hatch');
   if (body === 'coupe') {
     // у купе в боковом стекле есть и неподвижная «форточка» за дверью — дверь не длиннее ~1.3 м
     doorRear = Math.max(doorRear, doorFront - 0.3 * L);
@@ -327,25 +338,120 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
     trunkHw: 0.7 * hw,
   };
 
-  // ---------- 8. салон: мелкие неокрашенные детали внутри кабины ----------
+  let notesBody = '';
+  // ---------- 8. реальные границы деталей (швы) ----------
+  // Если капот/двери/крышка/бамперы лежат в модели отдельными мешами, узел и границы берём по ним:
+  // резать кузов по прямым линиям в этом случае не нужно и получается «не по кромкам панелей».
+  const toCar = (b: Box): Box => car(yawBox(b, yaw));
+  const findings =
+    hint.panels === false
+      ? { panels: [], lines: {}, notes: [] }
+      : detectPanels({
+          parts: vis,
+          hidden,
+          kinds: kind,
+          toCar,
+          dims,
+          lines,
+          sideGlass: gs.side.x.length > 6 ? { xMin: gs.side.xMin, xMax: gs.side.xMax } : undefined,
+        });
+  const linePatch = findings.lines as Partial<Record<keyof Lines, number>>;
+  // отдельные меши дверей — надёжнее стёкол: четыре двери исключают купе, две — ставят под сомнение седан
+  const doorZones = findings.panels.filter((panel) => panel.zone.startsWith('door_')).map((panel) => panel.zone);
+  if (hint.body === undefined && body === 'coupe' && doorZones.includes('door_rl') && doorZones.includes('door_rr')) {
+    body = rearBase - xRear >= 0.14 * L ? 'sedan' : 'hatch';
+    if (linePatch.trunkFront === undefined) {
+      lines.trunkFront = body === 'hatch' ? Math.min(lines.roofRear, lines.doorRear) : Math.min(rearBase, lines.doorRear);
+    }
+    notesBody = `Найдены четыре двери: тип кузова уточнён как «${body === 'sedan' ? 'седан' : 'хэтчбек'}».`;
+  }
+  for (const key of Object.keys(linePatch) as (keyof Lines)[]) {
+    const value = linePatch[key];
+    if (value === undefined || !Number.isFinite(value)) continue;
+    // защита от абсурдных значений: кромка не может уехать за пределы кузова
+    const span = key === 'sill' || key === 'belt' || key === 'bumperTopF' || key === 'bumperTopR'
+      ? [0, H]
+      : key === 'hoodHw' || key === 'trunkHw'
+        ? [0.15 * hw, hw * 0.98]
+        : [xRear - 0.05, xFront + 0.05];
+    if (value < span[0] || value > span[1]) continue;
+    if (key === 'sill' || key === 'belt') {
+      if (key === 'sill' && value > lines.belt - 0.05) continue;
+      if (key === 'belt' && value < lines.sill + 0.05) continue;
+    }
+    (lines[key] as number) = value;
+  }
+  // границы дверей могли сдвинуться — пересчитываем производные линии (если кромку крышки не нашли по мешу)
+  if (linePatch.doorRear !== undefined && linePatch.trunkFront === undefined && body !== 'coupe') {
+    lines.trunkFront = body === 'hatch' ? Math.min(lines.roofRear, lines.doorRear) : Math.min(rearBase, lines.doorRear);
+  }
+  const notes = [...findings.notes];
+  if (notesBody) notes.push(notesBody);
+  const pinned = new Map<string, string>();
+  for (const panel of findings.panels) {
+    const target = remapPanelZone(panel.zone, body);
+    for (const id of panel.parts) if (!pinned.has(id)) pinned.set(id, target);
+  }
+  if (findings.panels.some((p) => p.zone.startsWith('door_'))) {
+    notes.push(`Края дверей: ${lines.doorFront.toFixed(2)} / ${lines.doorSplit.toFixed(2)} / ${lines.doorRear.toFixed(2)} м.`);
+  }
+
+  // ---------- 9. салон: детали внутри кабины ----------
+  const cabinMinX = lines.doorRear - 0.3;
+  const cabinMaxX = lines.cowl + 0.25;
+  const insideCabin = (b: Box): boolean => {
+    const c = centerOf(b);
+    const s = sizeOf(b);
+    if (s[0] > 0.95 * L || s[1] > 0.95 * H || s[2] > 1.05 * W) return false;
+    if (c[0] < cabinMinX || c[0] > cabinMaxX) return false;
+    if (Math.abs(c[2]) > 0.9 * hw) return false;
+    if (c[1] < 0.06 * H || b.max[1] > H * 1.02) return false;
+    return true;
+  };
   for (const p of vis) {
-    if (kind.get(p.id) !== 'trim') continue;
+    const k = kind.get(p.id);
+    if (k !== 'trim' && k !== 'glass') continue;
+    const name = `${p.name} ${p.material}`;
     const b = car(yawBox(B(p), yaw));
     const c = centerOf(b);
     const s = sizeOf(b);
-    if (
-      Math.abs(c[2]) < 0.6 * hw && c[1] > lines.sill * 0.5 && c[1] < lines.belt + 0.5 && c[0] > lines.doorRear - 0.15 && c[0] < lines.cowl + 0.1 &&
-      b.max[1] < H * 0.97 && s[0] < 0.7 * L
-    )
+    // по названию: обивка, сиденья, торпедо, потолок, карты дверей
+    if (k === 'trim' && RE_INTERIOR.test(name) && insideCabin(b)) {
       kind.set(p.id, 'int');
+      confidence.set(p.id, 'medium');
+      continue;
+    }
+    // по геометрии: мелкая неокрашенная деталь внутри кабины
+    if (
+      k === 'trim' &&
+      Math.abs(c[2]) < 0.6 * hw && c[1] > lines.sill * 0.5 && c[1] < lines.belt + 0.5 && c[0] > cabinMinX && c[0] < cabinMaxX &&
+      b.max[1] < H * 0.97 && s[0] < 0.7 * L
+    ) {
+      kind.set(p.id, 'int');
+      confidence.set(p.id, 'low');
+    }
   }
+  const interiorParts = vis.filter((p) => kind.get(p.id) === 'int').length;
+  const hasInterior = interiorParts >= 2;
+  if (hasInterior) notes.push(`Салон: найдено деталей — ${interiorParts}; узлы салона берутся из модели.`);
+  else notes.push('Салон в модели не найден: узлы салона можно достроить процедурно или назначить детали вручную.');
 
   const infos: Record<string, PartInfo> = {};
   for (const p of parts) {
     const keep = hint.keep?.[p.id];
-    infos[p.id] = keep?.u
-      ? keep
-      : { n: p.name, k: kind.get(p.id) ?? 'trim', m: p.material, confidence: confidence.get(p.id) ?? 'low' };
+    if (keep?.u) {
+      infos[p.id] = keep;
+      continue;
+    }
+    const info: PartInfo = { n: p.name, k: kind.get(p.id) ?? 'trim', m: p.material, confidence: confidence.get(p.id) ?? 'low' };
+    const zone = pinned.get(p.id);
+    if (zone) {
+      // деталь совпадает с реальной панелью кузова: узел берётся из меша, а не из разрезов
+      info.z = zone;
+      info.b = 1;
+      info.confidence = findings.panels.find((x) => x.parts.includes(p.id))?.confidence ?? 'medium';
+    }
+    infos[p.id] = info;
   }
   return {
     v: 1,
@@ -356,13 +462,20 @@ export function analyze(parts: RawPart[], title: string, hint: AnalyzeHint = {})
     provenance: {
       dimensions: hint.length !== undefined ? 'manual' : 'auto',
       dimensionsConfidence: hint.length !== undefined ? 'medium' : 'low',
-      panelBoundaries: hint.body !== undefined ? 'manual' : 'auto',
-      panelBoundariesConfidence: hint.body !== undefined ? 'medium' : 'low',
+      panelBoundaries: hint.body !== undefined ? 'manual' : findings.panels.length ? 'auto' : 'auto',
+      panelBoundariesConfidence: hint.body !== undefined ? 'medium' : findings.panels.length ? 'medium' : 'low',
     },
+    autoNotes: notes.length ? notes.slice(0, 8) : undefined,
     frame,
     dims,
     lines,
     paint: paintMats,
     parts: infos,
   };
+}
+
+/** Узел панели с учётом типа кузова (у купе задних дверей нет). */
+function remapPanelZone(zone: string, body: BodyType): string {
+  if (body === 'coupe' && (zone === 'door_rl' || zone === 'door_rr')) return zone.replace('door_r', 'door_f');
+  return zone;
 }

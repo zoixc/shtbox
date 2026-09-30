@@ -11,6 +11,7 @@ import type { LineSegments, Material, Mesh, Object3D } from 'three';
 import { buildSedan } from '../sedan/build';
 import type { SedanSpec } from '../sedan/build';
 import { loadGltfScene, rigFromScene } from '../gltf';
+import type { PaintFinish } from '../../data/paintFinish';
 import type { ModelRig } from '../types';
 import { BMW116I_SPEC, HATCH_ZONES } from './bmw116i';
 
@@ -63,6 +64,7 @@ export function mergeRigs(
   const facing = new Map(glb.facing);
   const paint = new Map(glb.paint);
   const openables = new Map(glb.openables);
+  const windows = new Map([...(glb.windows ?? []), ...(proc.windows ?? [])]);
   for (const z of procZones) {
     const pm = proc.paint.get(z);
     if (pm) paint.set(z, pm);
@@ -82,12 +84,17 @@ export function mergeRigs(
     paint,
     pick,
     openables,
+    windows,
     anchors,
     facing,
     shell: [...glb.shell, ...proc.shell.filter((o) => !dropped.has(o))],
     setColor: (hex) => {
       glb.setColor(hex);
       proc.setColor(hex);
+    },
+    setFinish: (finish) => {
+      glb.setFinish?.(finish);
+      proc.setFinish?.(finish);
     },
     bounds: { center: [center.x, center.y, center.z], radius: Math.max(2.4, box.getSize(new Vector3()).length() / 2) },
     dispose: () => {
@@ -98,13 +105,17 @@ export function mergeRigs(
 }
 
 /** `load` подменяется в тестах (в Node нет fetch по относительному URL). */
-export async function createBmw116i(color: string, load: (url: string) => Promise<Object3D> = loadGltfScene): Promise<ModelRig> {
-  const [scene, proc] = await Promise.all([load(BMW116I_GLB_URL), Promise.resolve(buildSedan(BMW116I_GLB_SPEC, color))]);
+export async function createBmw116i(
+  color: string,
+  load: (url: string) => Promise<Object3D> = loadGltfScene,
+  finish?: PaintFinish,
+): Promise<ModelRig> {
+  const [scene, proc] = await Promise.all([load(BMW116I_GLB_URL), Promise.resolve(buildSedan(BMW116I_GLB_SPEC, color, finish))]);
   const glb = rigFromScene(
     scene,
     HATCH_ZONES.filter((z) => !PROCEDURAL_ZONES.has(z.id)),
     color,
-    'matte',
+    finish ?? 'matte',
   );
   return mergeRigs(glb, proc, PROCEDURAL_ZONES, OMITTED_BMW_BAY_OBJECTS);
 }

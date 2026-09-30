@@ -37,14 +37,15 @@ export function defineImportedModel(d: {
     id: d.id,
     name: d.name,
     description: d.description,
-    defaultColor: d.defaultColor ?? '#b9bec6',
+    defaultColor: d.defaultColor ?? d.profile?.color ?? '#b9bec6',
+    defaultFinish: d.profile?.finish,
     zones: zonesFor(d.shape.body, d.shape.layout),
     defaultMaintenance: d.maintenance ?? GENERIC_MAINTENANCE,
-    create: async (color) => {
+    create: async (color, finish) => {
       const { parsePackage, createImportedRig } = await import('./index');
       const pkg = await parsePackage(await d.load());
       const profile = d.profile ?? d.profilePatch?.(pkg.profile) ?? pkg.profile;
-      return createImportedRig(pkg.scene, profile, color);
+      return createImportedRig(pkg.scene, profile, color, finish);
     },
   };
 }

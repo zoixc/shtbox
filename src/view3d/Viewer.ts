@@ -32,7 +32,8 @@ import { BODY_KINDS } from '../core/types';
 import type { ZoneSummary } from '../core/store';
 import type { CarModelDef, Layer, ModelRig } from '../models/types';
 import { SpotType, globalTime, setHighlight, setSpots, updateNormalMatrix } from './paintMaterial';
-import type { SpotTypeId } from './paintMaterial';
+import type { PaintFinish, SpotTypeId } from './paintMaterial';
+import { DEFAULT_FINISH } from '../data/paintFinish';
 
 export type ViewPreset = 'iso' | 'front' | 'rear' | 'left' | 'right' | 'top' | 'under' | 'cabin';
 export type LightingPreset = 'studio' | 'daylight' | 'inspection';
@@ -185,26 +186,34 @@ export class Viewer {
   // ---------- модель ----------
   private token = 0;
   private color = '#b9bec6';
+  private finish: PaintFinish = DEFAULT_FINISH;
+  /** Опускание стёкол по узлам: целевая и текущая доля (0 — подняты, 1 — опущены) */
+  private windowTargets = new Map<string, number>();
+  private windowValues = new Map<string, number>();
   private issuesCache: Issue[] = [];
   private draftCache: { zone: string; spot: Spot; kind: string } | null = null;
 
-  setModel(def: CarModelDef, color: string, opts: { keepView?: boolean } = {}): void {
+  setModel(def: CarModelDef, color: string, opts: { keepView?: boolean; finish?: PaintFinish } = {}): void {
     this.color = color;
+    this.finish = opts.finish ?? def.defaultFinish ?? DEFAULT_FINISH;
     if (this.def === def) {
       this.rig?.setColor(color);
+      this.rig?.setFinish?.(this.finish);
       this.invalidate();
       return;
     }
     this.clearModel();
     this.def = def;
     const tok = ++this.token;
-    void def.create(color).then((rig) => {
+    void def.create(color, this.finish).then((rig) => {
       if (tok !== this.token || this.disposed) {
         rig.dispose();
         return;
       }
       rig.setColor(this.color);
+      rig.setFinish?.(this.finish);
       this.rig = rig;
+      for (const [zone, w] of rig.windows ?? []) w.set(this.windowValues.get(zone) ?? 0);
       this.fitGroundToRig(rig);
       this.carGroup.add(rig.root);
       this.zoneMeshes.clear();
@@ -249,6 +258,54 @@ export class Viewer {
   setColor(color: string): void {
     this.rig?.setColor(color);
     this.invalidate();
+  }
+
+  /** Тип покрытия кузова: матовый, металлик, перламутр… (см. `FINISH` в paintMaterial.ts). */
+  setFinish(finish: PaintFinish): void {
+    this.finish = finish;
+    this.rig?.setFinish?.(finish);
+    this.invalidate();
+  }
+
+  /** Стёкла дверей, которые умеет опускать эта модель, и их текущее положение. */
+  windowsList(): { id: string; label: string; value: number }[] {
+    if (!this.rig?.windows) return [];
+    return [...this.rig.windows].map(([id, w]) => ({ id, label: w.label, value: this.windowValues.get(id) ?? 0 }));
+  }
+
+  /** Опускает/поднимает одно стекло: 0 — поднято, 1 — опущено, 0.5 — наполовину. */
+  setWindow(zone: string, fraction: number): void {
+    if (!this.rig?.windows?.has(zone)) return;
+    this.windowTargets.set(zone, Math.max(0, Math.min(1, fraction)));
+    this.windowValues.set(zone, this.windowValues.get(zone) ?? 0);
+    this.invalidate();
+  }
+
+  /** То же для всех стёкол сразу. */
+  setWindows(fraction: number): void {
+    for (const zone of this.rig?.windows?.keys() ?? []) this.setWindow(zone, fraction);
+  }
+
+  /** Плавно подтягивает створки к цели; возвращает true, пока есть движение. */
+  private stepWindows(dt: number): boolean {
+    let moving = false;
+    for (const [zone, w] of this.rig?.windows ?? []) {
+      const target = this.windowTargets.get(zone) ?? 0;
+      let value = this.windowValues.get(zone) ?? 0;
+      if (Math.abs(value - target) < 0.002) {
+        if (value !== target) {
+          this.windowValues.set(zone, target);
+          w.set(target);
+        }
+        continue;
+      }
+      value += (target - value) * (1 - Math.exp(-dt * 6));
+      if (Math.abs(value - target) < 0.003) value = target;
+      this.windowValues.set(zone, value);
+      w.set(value);
+      moving = true;
+    }
+    return moving;
   }
 
   /** Невымеренные визуальные пресеты; студийный свет сохраняет прежние настройки по умолчанию. */
@@ -818,6 +875,7 @@ export class Viewer {
         }
       }
     }
+    if (this.stepWindows(dt)) animating = true;
     if (this.stepSpots(dt)) animating = true;
     if (this.continuous) {
       // анимация метки — не чаще ~30 к/с

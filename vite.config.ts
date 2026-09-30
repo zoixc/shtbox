@@ -29,6 +29,24 @@ function csp(): Plugin {
   };
 }
 
+/**
+ * Basis Universal поставляется в three.js UMD-скриптом: в ESM-контексте он не экспортирует
+ * транскодер (three объявлен как `"type": "module"`), поэтому модуль подменяется версией с
+ * `export default BASIS`. Плагин работает и для сборки, и для worker-ов, и для vitest.
+ */
+function basisTranscoder(): Plugin {
+  return {
+    name: 'shtbox-basis-transcoder',
+    enforce: 'pre',
+    load(id) {
+      if (!/\/libs\/basis\/basis_transcoder\.js$/.test(id)) return;
+      // UMD-хвост (`module.exports = BASIS`) конфликтует с ESM-экспортом — отрезаем его.
+      const source = readFileSync(id, 'utf8').replace(/\nif \(typeof exports === 'object'[\s\S]*$/, '');
+      return { code: `${source}\nexport default BASIS;\n`, map: null };
+    },
+  };
+}
+
 /** Service worker пишется на TS (делит код расчёта ТО с приложением) и собирается esbuild в одиночный dist/sw.js без хэша. */
 function serviceWorker(): Plugin {
   let root = process.cwd();
@@ -59,10 +77,15 @@ const bmwModelHash = createHash('sha256').update(readFileSync(bmwModelPath)).dig
 
 export default defineConfig({
   define: { __BMW116I_MODEL_URL__: JSON.stringify(`/models/bmw116i.glb?v=${bmwModelHash}`) },
-  plugins: [preact(), csp(), serviceWorker()],
+  plugins: [preact(), basisTranscoder(), csp(), serviceWorker()],
   // /sync → локальный сервер синхронизации (server/sync-server.mjs), как это делает nginx в Docker
   server: { host: '0.0.0.0', allowedHosts: true, proxy: { '/sync': 'http://127.0.0.1:8081' } },
   preview: { host: '0.0.0.0', allowedHosts: true, proxy: { '/sync': 'http://127.0.0.1:8081' } },
   build: { target: 'es2022', chunkSizeWarningLimit: 700 },
-  test: { environment: 'node', include: ['tests/**/*.test.ts'] },
+  test: {
+    environment: 'node',
+    include: ['tests/**/*.test.ts'],
+    // UMD-обёртку Basis нужно пропустить через плагин, а не отдавать Node как ESM без экспортов.
+    server: { deps: { inline: [/libs\/basis\/basis_transcoder\.js/] } },
+  },
 });

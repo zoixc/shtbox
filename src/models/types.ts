@@ -1,4 +1,6 @@
 import type { Mesh, Object3D, Vector3 } from 'three';
+import type { PaintFinish } from '../view3d/paintMaterial';
+import type { WindowControl } from '../view3d/window';
 
 /**
  * Слой модели: что сейчас показываем/можно выбирать.
@@ -69,8 +71,12 @@ export interface ModelRig {
   facing: Map<string, [number, number, number]>;
   /** Меши, которые становятся прозрачными в режимах «Салон/Агрегаты» */
   shell: Object3D[];
+  /** Опускаемые стёкла дверей (если модель их поддерживает): узел-дверь → створка */
+  windows?: Map<string, WindowControl>;
   /** Перекрасить кузов */
   setColor(hex: string): void;
+  /** Сменить тип покрытия (матовый, металлик, перламутр…) */
+  setFinish?(finish: PaintFinish): void;
   /** Габариты для камеры: центр и радиус */
   bounds: { center: [number, number, number]; radius: number };
   dispose(): void;
@@ -81,10 +87,12 @@ export interface CarModelDef {
   name: string;
   description: string;
   defaultColor: string;
+  /** тип покрытия по умолчанию (матовый, металлик…) */
+  defaultFinish?: PaintFinish;
   zones: ZoneDef[];
   defaultMaintenance: TaskTemplate[];
   /** Создаёт 3D-модель. Загрузка ленивая, чтобы three.js не попадал в стартовый бандл. */
-  create(color: string): Promise<ModelRig>;
+  create(color: string, finish?: PaintFinish): Promise<ModelRig>;
 }
 
 /** Описание модели, геометрия которой лежит в glTF/GLB (см. `src/models/gltf.ts` и `docs/ADDING_MODELS.md`). */

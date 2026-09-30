@@ -4,6 +4,8 @@ import { getModel, hasModel, listModels } from '../models/registry';
 import { guard, store, ui } from '../state';
 import { parseNum } from '../util';
 import { ConfirmButton, Field } from './common';
+import { PaintPicker } from './PaintPicker';
+import type { PaintFinish } from '../data/paintFinish';
 
 export function Modal(props: { title: string; onClose?: () => void; children: ComponentChildren; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -38,6 +40,8 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
   const [name, setName] = useState(editing?.name ?? models[0].name.replace(/ \(.*\)/, ''));
   const [modelId, setModelId] = useState(editing?.modelId ?? models[0].id);
   const [color, setColor] = useState(editing?.color ?? getModel(models[0].id).defaultColor);
+  const [colorCode, setColorCode] = useState(editing?.colorCode ?? '');
+  const [finish, setFinish] = useState<PaintFinish | null>(editing?.finish ?? null);
   const [plate, setPlate] = useState(editing?.plate ?? '');
   const [vin, setVin] = useState(editing?.vin ?? '');
   const [year, setYear] = useState(editing?.year ? String(editing.year) : '');
@@ -53,21 +57,30 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
       const m = getModel(ret.modelId);
       setModelId(m.id);
       setColor(m.defaultColor);
+      setColorCode('');
+      setFinish(null);
       setName(m.name);
     }
     ui.importReturn.value = null;
   }, [ret, ui.dialog.value]);
 
-  // живой предпросмотр цвета на модели
+  // живой предпросмотр цвета и покрытия на модели
   useEffect(() => {
     ui.previewColor.value = color;
   }, [color]);
-  useEffect(() => () => void (ui.previewColor.value = null), []);
+  useEffect(() => {
+    ui.previewFinish.value = finish;
+  }, [finish]);
+  useEffect(() => () => {
+    ui.previewColor.value = null;
+    ui.previewFinish.value = null;
+  }, []);
 
   const submit = async (e: Event) => {
     e.preventDefault();
     const data = {
-      name: name.trim() || 'Мой автомобиль', modelId, color, plate: plate.trim(), vin: vin.trim().toUpperCase(),
+      name: name.trim() || 'Мой автомобиль', modelId, color, colorCode: colorCode.trim(), finish: finish ?? undefined,
+      plate: plate.trim(), vin: vin.trim().toUpperCase(),
       year: parseNum(year), mileage: Math.round(parseNum(mileage) ?? 0),
     };
     if (editing) {
@@ -100,6 +113,8 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
               }
               setModelId(id);
               setColor(getModel(id).defaultColor);
+              setColorCode('');
+              setFinish(null);
             }}
           >
             {models.map((m) => (
@@ -111,10 +126,21 @@ export function CarDialog(props: { mode: 'new' | 'edit'; forced?: boolean }) {
         <Field label="Цвет кузова">
           <div class="swatches">
             {SWATCHES.map((c) => (
-              <button type="button" key={c} class={`swatch ${c === color ? 'swatch-on' : ''}`} style={{ background: c }} aria-label={c} onClick={() => setColor(c)} />
+              <button type="button" key={c} class={`swatch ${c === color ? 'swatch-on' : ''}`} style={{ background: c }} aria-label={c} title={c}
+                onClick={() => { setColor(c); setColorCode(''); }}
+              />
             ))}
             <input type="color" value={color} onInput={(e) => setColor((e.target as HTMLInputElement).value)} aria-label="Свой цвет" />
           </div>
+          <PaintPicker
+            color={color}
+            finish={finish}
+            code={colorCode}
+            defaultFinish={getModel(modelId).defaultFinish}
+            onColor={setColor}
+            onFinish={setFinish}
+            onCode={setColorCode}
+          />
         </Field>
         <div class="row2">
           <Field label="Госномер">
@@ -205,6 +231,13 @@ export function HelpDialog() {
           <li>Во вкладке «Журнал» создавайте чек-листы осмотров и добавляйте отдельные фото «до / после». Замечание со статусом «Требуется ремонт» можно связать с дефектом.</li>
           <li>Там же можно импортировать OBD-II CSV/JSON: сохраняются коды и текст источника, но приложение не ставит диагноз. Меню ☰ → «Отчёт по автомобилю · PDF» позволяет убрать VIN, госномер и заметки.</li>
           <li>Кнопка «Свет» меняет визуальный пресет освещения 3D; это не калиброванный дневной свет.</li>
+          <li><b>Краска</b>: в карточке автомобиля выберите покрытие (матовый, сатин, глянцевый, металлик,
+            перламутр…) и цвет по коду — «RAL 9005», «графит», «металлик» или свой HEX. Коды марок
+            (BMW 475, LC9Z…) добавьте кнопкой «Свой код»: они сохраняются только на этом устройстве.
+            Настройка покрытия у модели — вкладка «Краска» в мастере импорта.</li>
+          <li><b>Стёкла</b>: если модель умеет опускать стёкла дверей, над сценой появляется меню «Стёкла».
+            Геометрия не режется: стекло уезжает вниз по маске в шейдере, поэтому закрытое состояние
+            выглядит как исходная модель.</li>
           <li>Колесо мыши/щипок — масштаб, ЛКМ — вращение, ПКМ — сдвиг.</li>
         </ul>
       </div>

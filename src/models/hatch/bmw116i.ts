@@ -97,7 +97,7 @@ export const bmw116i: CarModelDef = {
   defaultColor: '#e6e9ec',
   zones: HATCH_ZONES,
   defaultMaintenance: BMW116I_MAINTENANCE,
-  create: async (color) => (await import('./hybrid')).createBmw116i(color),
+  create: async (color, finish) => (await import('./hybrid')).createBmw116i(color, undefined, finish),
 };
 
 /** Лёгкая процедурная версия: отдельная трёхдверная модель E81, не гибридный F20 GLB. */
@@ -108,5 +108,5 @@ export const bmw116iLite: CarModelDef = {
   defaultColor: '#e6e9ec',
   zones: BMW116I_E81_ZONES,
   defaultMaintenance: BMW116I_E81_MAINTENANCE,
-  create: async (color) => (await import('../sedan/build')).buildSedan(BMW116I_E81_SPEC, color),
+  create: async (color, finish) => (await import('../sedan/build')).buildSedan(BMW116I_E81_SPEC, color, finish),
 };
