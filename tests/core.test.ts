@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { IdbStorage, MemoryStorage } from '../src/core/db';
-import { addMonths } from '../src/core/dates';
+import { addMonths, todayStr } from '../src/core/dates';
 import { dueInfo } from '../src/core/maintenance';
 import { Store } from '../src/core/store';
 import { ValidationError, parseBackup, parseBackupText } from '../src/core/validation';
@@ -81,7 +81,7 @@ describe('store', () => {
     const s = await fresh();
     const i = await s.addIssue({ zoneId: 'door_fl', kind: 'rust', title: 'Ржавчина на пороге двери', cost: 3000 });
     expect(s.zoneSummary.value.get('door_fl')?.open).toBe(1);
-    await s.completeIssue(i.id, { date: '2026-05-01', mileage: 51000 });
+    await s.completeIssue(i.id, { date: todayStr(), mileage: 51000 });
     expect(s.zoneSummary.value.get('door_fl')).toBeUndefined();
     expect(s.carLogs.value).toHaveLength(1);
     expect(s.carLogs.value[0]).toMatchObject({ kind: 'bodywork', cost: 3000, mileage: 51000, zoneId: 'door_fl' });

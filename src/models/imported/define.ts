@@ -27,6 +27,8 @@ export function defineImportedModel(d: {
   shape: Pick<Profile, 'body' | 'layout'>;
   /** если задан — используется вместо разметки из файла (правки пользователя) */
   profile?: Profile;
+  /** модельные правки профиля после чтения пакета (например, контуры панелей для встроенной модели) */
+  profilePatch?: (profile: Profile) => Profile;
   defaultColor?: string;
   maintenance?: TaskTemplate[];
   load: () => Promise<ArrayBuffer>;
@@ -41,7 +43,8 @@ export function defineImportedModel(d: {
     create: async (color) => {
       const { parsePackage, createImportedRig } = await import('./index');
       const pkg = await parsePackage(await d.load());
-      return createImportedRig(pkg.scene, d.profile ?? pkg.profile, color);
+      const profile = d.profile ?? d.profilePatch?.(pkg.profile) ?? pkg.profile;
+      return createImportedRig(pkg.scene, profile, color);
     },
   };
 }

@@ -18,14 +18,57 @@ export interface Zoner {
 
 const sd = (z: number) => (z < 0 ? 'l' : 'r');
 
+function pointInPolygon(x: number, y: number, points: readonly [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    const cross = (x - xi) * (yj - yi) - (y - yi) * (xj - xi);
+    if (Math.abs(cross) < 1e-8 && x >= Math.min(xi, xj) - 1e-8 && x <= Math.max(xi, xj) + 1e-8 && y >= Math.min(yi, yj) - 1e-8 && y <= Math.max(yi, yj) + 1e-8) return true;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 export function makeZoner(pr: Profile): Zoner {
   const L: Lines = pr.lines;
   const hw = pr.dims.W / 2;
   const coupe = pr.body === 'coupe';
   const axleMid = (pr.dims.axleF + pr.dims.axleR) / 2;
   const doorOf = (x: number, z: number): string => (coupe || x >= L.doorSplit ? `door_f${sd(z)}` : `door_r${sd(z)}`);
+  const regions = (pr.panelRegions ?? []).map((region) => {
+    const first = region.points.map((p) => p[0]);
+    const second = region.points.map((p) => p[1]);
+    return {
+      ...region,
+      minFirst: Math.min(...first), maxFirst: Math.max(...first),
+      minSecond: Math.min(...second), maxSecond: Math.max(...second),
+    };
+  });
+  const maskedZones = new Set(regions.map((r) => r.zone));
 
-  const paint = (c: Vec3, n: Vec3): string => {
+  const panelZone = (kind: 'paint' | 'glass' | 'trim', c: Vec3, n: Vec3): string | null => {
+    for (const r of regions) {
+      if (r.kinds && !r.kinds.includes(kind)) continue;
+      const first = c[0];
+      const second = r.projection === 'side' ? c[1] : c[2];
+      if (first < r.minFirst - 1e-8 || first > r.maxFirst + 1e-8 || second < r.minSecond - 1e-8 || second > r.maxSecond + 1e-8) continue;
+      if (r.projection === 'side') {
+        if (r.minAbsZ !== undefined && Math.abs(c[2]) < r.minAbsZ) continue;
+        if (r.side === 'left' && c[2] >= 0) continue;
+        if (r.side === 'right' && c[2] <= 0) continue;
+      } else {
+        if (r.minNormalY !== undefined && n[1] < r.minNormalY) continue;
+        if (r.side === 'left' && c[2] >= 0) continue;
+        if (r.side === 'right' && c[2] <= 0) continue;
+      }
+      if (!pointInPolygon(first, second, r.points)) continue;
+      return r.zone;
+    }
+    return null;
+  };
+
+  const paintByLines = (c: Vec3, n: Vec3): string => {
     const [x, y, z] = c;
     const az = Math.abs(z);
     if (x >= L.bumperFront && y < L.bumperTopF) return 'bumper_f';
@@ -48,14 +91,39 @@ export function makeZoner(pr: Profile): Zoner {
     return `quarter_r${sd(z)}`;
   };
 
-  const trim = (c: Vec3, n: Vec3): string => {
+  // Если для этой зоны задан авторский контур, не возвращаемся к прямоугольному plane-cut за его пределами.
+  const avoidUnmaskedPanel = (zone: string, c: Vec3): string => {
+    if (!maskedZones.has(zone)) return zone;
+    const [x, y, z] = c;
+    if (zone.startsWith('door_')) {
+      const side = sd(z);
+      if (y < L.sill + 0.06) return `sill_${side}`;
+      if (y >= L.belt) return 'roof';
+      if (x >= L.doorFront) return `fender_f${side}`;
+      if (x <= L.doorRear) return `quarter_r${side}`;
+      return y < (L.sill + L.belt) / 2 ? `sill_${side}` : `quarter_r${side}`;
+    }
+    if (zone === 'hood') return `fender_f${sd(z)}`;
+    if (zone === 'trunk') {
+      if (x <= L.bumperRear && y < L.bumperTopR) return 'bumper_r';
+      return `quarter_r${sd(z)}`;
+    }
+    return zone;
+  };
+  const routePanel = (kind: 'paint' | 'glass' | 'trim', c: Vec3, n: Vec3, byLines: string): string =>
+    panelZone(kind, c, n) ?? avoidUnmaskedPanel(byLines, c);
+
+  const paint = (c: Vec3, n: Vec3): string => routePanel('paint', c, n, paintByLines(c, n));
+
+  const trimByLines = (c: Vec3, n: Vec3): string => {
     const [x, y, z] = c;
     // зеркала, рамки окон: над поясом в зоне дверей — к двери
     if (x >= L.doorRear && x <= L.doorFront && y > L.belt - 0.1 && y < L.belt + 0.5 && Math.abs(z) > 0.7 * hw) return doorOf(x, z);
-    return paint(c, n);
+    return paintByLines(c, n);
   };
+  const trim = (c: Vec3, n: Vec3): string => routePanel('trim', c, n, trimByLines(c, n));
 
-  const glass = (c: Vec3, n: Vec3): string => {
+  const glassByLines = (c: Vec3, n: Vec3): string => {
     const [x, , z] = c;
     const side = Math.abs(n[2]) > Math.abs(n[0]) && Math.abs(z) > 0.45 * hw;
     if (side) {
@@ -65,6 +133,7 @@ export function makeZoner(pr: Profile): Zoner {
     if (x > (L.roofFront + L.roofRear) / 2) return 'windshield';
     return pr.body === 'hatch' ? 'trunk' : 'rear_glass';
   };
+  const glass = (c: Vec3, n: Vec3): string => routePanel('glass', c, n, glassByLines(c, n));
 
   const light = (c: Vec3) => (c[0] >= axleMid ? 'lights_f' : 'lights_r');
 
@@ -152,8 +221,14 @@ export function splitInto(
     }
     push(zc, p, n);
   };
+  const trianglePos = new Array<number>(9);
+  const triangleNor = new Array<number>(9);
   for (let t = 0; t < pos.length; t += 9) {
-    rec(Array.from({ length: 9 }, (_, i) => pos[t + i]), Array.from({ length: 9 }, (_, i) => nor[t + i]), 0);
+    for (let i = 0; i < 9; i++) {
+      trianglePos[i] = pos[t + i];
+      triangleNor[i] = nor[t + i];
+    }
+    rec(trianglePos, triangleNor, 0);
   }
 }
 
@@ -162,9 +237,15 @@ export const SPLIT_BUDGET = MAX_SPLIT_TRIS;
 /** Доля треугольников по зонам (для решения «деталь целиком или по треугольникам»). */
 export function histogram(pos: ArrayLike<number>, nor: ArrayLike<number>, zoneFn: (c: Vec3, n: Vec3) => string): Map<string, number> {
   const h = new Map<string, number>();
+  const c: Vec3 = [0, 0, 0];
+  const n: Vec3 = [0, 0, 0];
   for (let t = 0; t < pos.length; t += 9) {
-    const c: Vec3 = [(pos[t] + pos[t + 3] + pos[t + 6]) / 3, (pos[t + 1] + pos[t + 4] + pos[t + 7]) / 3, (pos[t + 2] + pos[t + 5] + pos[t + 8]) / 3];
-    const n: Vec3 = [(nor[t] + nor[t + 3] + nor[t + 6]) / 3, (nor[t + 1] + nor[t + 4] + nor[t + 7]) / 3, (nor[t + 2] + nor[t + 5] + nor[t + 8]) / 3];
+    c[0] = (pos[t] + pos[t + 3] + pos[t + 6]) / 3;
+    c[1] = (pos[t + 1] + pos[t + 4] + pos[t + 7]) / 3;
+    c[2] = (pos[t + 2] + pos[t + 5] + pos[t + 8]) / 3;
+    n[0] = (nor[t] + nor[t + 3] + nor[t + 6]) / 3;
+    n[1] = (nor[t + 1] + nor[t + 4] + nor[t + 7]) / 3;
+    n[2] = (nor[t + 2] + nor[t + 5] + nor[t + 8]) / 3;
     const z = zoneFn(c, n);
     h.set(z, (h.get(z) ?? 0) + 1);
   }

@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
-import { formatDate } from '../core/dates';
+import { addDays, formatDate } from '../core/dates';
+import { averageDailyMileage } from '../core/maintenance';
 import type { DueInfo } from '../core/maintenance';
 import { ISSUE_KIND_LABEL, LOG_KIND_LABEL, PRIORITY_LABEL } from '../core/types';
 import type { Issue, LogEntry, MaintenanceTask } from '../core/types';
@@ -23,6 +24,7 @@ const KIND_TONE = { breakdown: 'red', todo: 'blue', rust: 'amber', dent: 'amber'
 
 export function IssueItem(props: { issue: Issue; showZone?: boolean }) {
   const i = props.issue;
+  const inspection = i.inspectionId ? store.inspections.value.find((x) => x.id === i.inspectionId) : undefined;
   const [completing, setCompleting] = useState(false);
   const edit = () => {
     const d: Draft = { editId: i.id, zoneId: i.zoneId, kind: i.kind, title: i.title, notes: i.notes, priority: i.priority, cost: i.cost !== undefined ? String(i.cost) : '', spot: i.spot };
@@ -43,6 +45,7 @@ export function IssueItem(props: { issue: Issue; showZone?: boolean }) {
           </button>
         )}
         {i.notes && <p class="item-notes">{i.notes}</p>}
+        {inspection && <p class="item-meta">Создано по осмотру «{inspection.title}» от {formatDate(inspection.date)}</p>}
         <p class="item-meta">
           с {formatDate(new Date(i.createdAt).toISOString().slice(0, 10))}
           {i.cost !== undefined && ` · ≈ ${fmtMoney(i.cost)}`}
@@ -76,6 +79,9 @@ export function TaskItem(props: { task: MaintenanceTask; showZone?: boolean }) {
   const [mode, setMode] = useState<'none' | 'done' | 'edit'>('none');
   const due = store.taskDue.value.get(t.id);
   const dt = dueText(due);
+  const dailyKm = averageDailyMileage(store.carMileages.value);
+  const estimateDays = due?.leftKm !== undefined && due.leftKm > 0 && dailyKm ? Math.ceil(due.leftKm / dailyKm) : undefined;
+  const estimateDate = estimateDays !== undefined && estimateDays <= 3650 ? addDays(store.today.value, estimateDays) : undefined;
   const every = [t.everyKm ? `${fmtKm(t.everyKm)}` : '', t.everyMonths ? `${t.everyMonths} мес.` : ''].filter(Boolean).join(' / ');
   if (mode === 'edit') return <TaskForm task={t} zoneId={t.zoneId} onDone={() => setMode('none')} />;
   return (
@@ -92,6 +98,7 @@ export function TaskItem(props: { task: MaintenanceTask; showZone?: boolean }) {
         )}
         <p class="item-meta">каждые {every}</p>
         <p class={`item-due tone-${dt.tone}`}>{dt.text}</p>
+        {estimateDate && due?.leftKm !== undefined && <p class="item-meta">Оценка по истории пробега: около {formatDate(estimateDate)} ({estimateDays} дн.). Это ориентир, не замена регламенту.</p>}
         <p class="item-meta">
           Последний раз: {formatDate(t.lastDate)}
           {t.lastKm !== undefined && ` · ${fmtKm(t.lastKm)}`}

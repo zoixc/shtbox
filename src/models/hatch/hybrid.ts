@@ -9,16 +9,25 @@
 import { Box3, Group, Vector3 } from 'three';
 import type { LineSegments, Material, Mesh, Object3D } from 'three';
 import { buildSedan } from '../sedan/build';
+import type { SedanSpec } from '../sedan/build';
 import { loadGltfScene, rigFromScene } from '../gltf';
 import type { ModelRig } from '../types';
 import { BMW116I_SPEC, HATCH_ZONES } from './bmw116i';
 
-export const BMW116I_GLB_URL = '/models/bmw116i.glb';
+declare const __BMW116I_MODEL_URL__: string;
+
+/** Query hash derives from the GLB bytes at build time, so Nginx may safely use immutable caching. */
+export const BMW116I_GLB_URL = __BMW116I_MODEL_URL__;
 
 /** Узлы, которые остаются процедурными. */
 export const PROCEDURAL_ZONES: ReadonlySet<string> = new Set([
   'engine_bay', 'trunk_bay', 'headliner', 'engine', 'gearbox', 'cooling', 'battery', 'electrics', 'susp_f', 'susp_r', 'exhaust', 'fuel_tank',
 ]);
+
+// The source BMW has its exhaust on the left (−Z); keep the simplified procedural-only model unchanged.
+const BMW116I_GLB_SPEC: SedanSpec = { ...BMW116I_SPEC, exhaustSide: -1 };
+// These generic template bulkheads do not match the BMW shell closely enough and can poke through its sides.
+const OMITTED_BMW_BAY_OBJECTS = new Set(['engine_bay:bulkhead', 'trunk_bay:bulkhead']);
 
 const disposeObj = (o: Object3D): void => {
   const m = o as Mesh;
@@ -28,13 +37,18 @@ const disposeObj = (o: Object3D): void => {
 };
 
 /** Объединяет GLB-модель и процедурную «начинку». Чистая функция — тестируется без сети. */
-export function mergeRigs(glb: ModelRig, proc: ModelRig, procZones: ReadonlySet<string> = PROCEDURAL_ZONES): ModelRig {
+export function mergeRigs(
+  glb: ModelRig,
+  proc: ModelRig,
+  procZones: ReadonlySet<string> = PROCEDURAL_ZONES,
+  omittedProcObjects: ReadonlySet<string> = new Set(),
+): ModelRig {
   const keep = new Set<Object3D>();
   for (const z of procZones) for (const o of proc.pick.get(z) ?? []) o.traverse((c) => keep.add(c));
   const drop: Object3D[] = [];
   proc.root.traverse((o) => {
     const m = o as Mesh & LineSegments;
-    if ((m.isMesh || m.isLineSegments) && !keep.has(o) && !o.userData.bay) drop.push(o);
+    if ((m.isMesh || m.isLineSegments) && (!keep.has(o) || omittedProcObjects.has(o.name))) drop.push(o);
   });
   const dropped = new Set(drop);
   for (const o of drop) {
@@ -55,7 +69,7 @@ export function mergeRigs(glb: ModelRig, proc: ModelRig, procZones: ReadonlySet<
     const op = proc.openables.get(z);
     if (op) openables.set(z, op);
     const p = proc.pick.get(z);
-    if (p) pick.set(z, p);
+    if (p) pick.set(z, p.filter((o) => !dropped.has(o)));
     const a = proc.anchors.get(z);
     if (a) anchors.set(z, a);
     const f = proc.facing.get(z);
@@ -85,11 +99,12 @@ export function mergeRigs(glb: ModelRig, proc: ModelRig, procZones: ReadonlySet<
 
 /** `load` подменяется в тестах (в Node нет fetch по относительному URL). */
 export async function createBmw116i(color: string, load: (url: string) => Promise<Object3D> = loadGltfScene): Promise<ModelRig> {
-  const [scene, proc] = await Promise.all([load(BMW116I_GLB_URL), Promise.resolve(buildSedan(BMW116I_SPEC, color))]);
+  const [scene, proc] = await Promise.all([load(BMW116I_GLB_URL), Promise.resolve(buildSedan(BMW116I_GLB_SPEC, color))]);
   const glb = rigFromScene(
     scene,
     HATCH_ZONES.filter((z) => !PROCEDURAL_ZONES.has(z.id)),
     color,
+    'matte',
   );
-  return mergeRigs(glb, proc);
+  return mergeRigs(glb, proc, PROCEDURAL_ZONES, OMITTED_BMW_BAY_OBJECTS);
 }

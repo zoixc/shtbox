@@ -1,7 +1,7 @@
 import type { VNode } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { ViewerPane } from './ViewerPane';
-import { guard, missingUserModel, selectZone, store, ui } from './state';
+import { guard, missingModel, selectZone, store, ui } from './state';
 import type { SidebarTab } from './state';
 import { BackupDialog } from './ui/BackupDialog';
 import { CarDialog, HelpDialog, PhotoDialog } from './ui/Dialogs';
@@ -9,6 +9,7 @@ import { Empty, Menu } from './ui/common';
 import { ModelsDialog } from './ui/ModelsDialog';
 import { IssuesTab, LogTab, TasksTab, ZoneList } from './ui/Tabs';
 import { ZonePanel } from './ui/ZonePanel';
+import { ReportDialog } from './ui/ReportDialog';
 import { fmtKm, parseNum } from './util';
 
 /** Мастер импорта тянет three/meshoptimizer — грузим только по требованию. */
@@ -90,6 +91,7 @@ function Topbar() {
           ...(car ? [{ label: 'Изменить автомобиль…', onSelect: () => (ui.dialog.value = 'car-edit') }] : []),
           { label: 'Добавить автомобиль…', onSelect: () => (ui.dialog.value = 'car-new') },
           { label: 'Модели автомобилей…', onSelect: () => (ui.dialog.value = 'models') },
+          ...(car ? [{ label: 'Отчёт по автомобилю · PDF…', onSelect: () => (ui.dialog.value = 'report' as const) }] : []),
           { separator: true, label: '', onSelect: () => {} },
           { label: 'Данные, синхронизация, напоминания', onSelect: () => (ui.dialog.value = 'backup') },
           { separator: true, label: '', onSelect: () => {} },
@@ -141,11 +143,11 @@ export function App() {
   const dialog = ui.dialog.value;
   const hasCar = !!store.activeCar.value;
   void ui.modelsRev.value;
-  const missing = missingUserModel();
+  const missing = missingModel();
   return (
-    <div class="app">
+    <div class={`app ${dialog === 'report' ? 'app-report-mode' : ''}`}>
       <Topbar />
-      {missing && <div class="model-missing" role="alert">Модель этого автомобиля ещё не загружена на этом устройстве (модели хранятся локально). <button class="btn" onClick={() => ((ui.replaceId.value = missing), (ui.editModel.value = null), (ui.importReturn.value = null), (ui.dialog.value = 'import'))}>Загрузить файл</button></div>}
+      {missing && <div class="model-missing" role="alert">3D-модель этого автомобиля недоступна на устройстве. Записи сохранены; загрузите GLB-пакет, чтобы восстановить разметку. <button class="btn" onClick={() => ((ui.replaceId.value = missing), (ui.editModel.value = null), (ui.importReturn.value = null), (ui.dialog.value = 'import'))}>Загрузить файл</button></div>}
       <main class="main">
         <ViewerPane />
         {hasCar ? <Sidebar /> : <aside class="sidebar"><Empty>Добавьте первый автомобиль.</Empty></aside>}
@@ -156,6 +158,7 @@ export function App() {
       {dialog === 'models' && <ModelsDialog />}
       {dialog === 'import' && <LazyWizard />}
       {dialog === 'backup' && <BackupDialog />}
+      {dialog === 'report' && <ReportDialog />}
       {dialog === 'help' && <HelpDialog />}
       {ui.lightbox.value && <PhotoDialog id={ui.lightbox.value} />}
       {store.error.value && <div class="toast toast-err" role="alert">{store.error.value}</div>}

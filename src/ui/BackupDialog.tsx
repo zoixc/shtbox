@@ -239,7 +239,7 @@ export function BackupDialog() {
         {pending && (
           <div class="card">
             <p>
-              {pending.source.kind === 'sync' ? `На сервере (ревизия ${pending.source.rev})` : 'В файле'}: автомобилей — <b>{pending.backup.cars.length}</b>, записей — <b>{pending.backup.issues.length}</b>, регламент — <b>{pending.backup.tasks.length}</b>, журнал — <b>{pending.backup.logs.length}</b>, фото — <b>{pending.backup.attachments?.length ?? 0}</b>.
+              {pending.source.kind === 'sync' ? `На сервере (ревизия ${pending.source.rev})` : 'В файле'}: автомобилей — <b>{pending.backup.cars.length}</b>, записей — <b>{pending.backup.issues.length}</b>, регламент — <b>{pending.backup.tasks.length}</b>, журнал — <b>{pending.backup.logs.length}</b>, пробег — <b>{pending.backup.mileages?.length ?? 0}</b>, осмотры — <b>{pending.backup.inspections?.length ?? 0}</b>, OBD — <b>{pending.backup.diagnostics?.length ?? 0}</b>, фото — <b>{pending.backup.attachments?.length ?? 0}</b>.
             </p>
             <label class="check">
               <input type="radio" name="mode" checked={mode === 'merge'} onChange={() => setMode('merge')} /> Объединить с текущими данными

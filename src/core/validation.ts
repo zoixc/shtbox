@@ -6,7 +6,7 @@
 import { isDateStr } from './dates';
 import { b64ToBytes } from './b64';
 import { ATTACHMENT_MIMES, BODY_KINDS } from './types';
-import type { Attachment, AttachmentMime, AttachmentOwner, Backup, BackupAttachment, Car, ID, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, Spot } from './types';
+import type { Attachment, AttachmentMime, AttachmentOwner, Backup, BackupAttachment, Car, DiagnosticCode, DiagnosticReport, ID, Inspection, InspectionItem, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, MileageEntry, Spot } from './types';
 
 export class ValidationError extends Error {}
 
@@ -113,6 +113,7 @@ export function sanitizeIssue(v: unknown): Issue {
     doneDate: status === 'done' ? date(o.doneDate) : undefined,
     cost: num(o.cost, 0, LIMITS.maxCost),
     spot,
+    inspectionId: typeof o.inspectionId === 'string' && ID_RE.test(o.inspectionId) ? o.inspectionId : undefined,
   };
 }
 
@@ -143,22 +144,67 @@ export function sanitizeLog(v: unknown): LogEntry {
   let ref: LogEntry['ref'];
   if (o.ref !== undefined && o.ref !== null) {
     const r = obj(o.ref, 'log.ref');
-    if ((r.type === 'issue' || r.type === 'task') && typeof r.id === 'string' && ID_RE.test(r.id)) {
-      ref = { type: r.type, id: r.id };
-    }
+    if ((r.type === 'issue' || r.type === 'task') && typeof r.id === 'string' && ID_RE.test(r.id)) ref = { type: r.type, id: r.id };
   }
   return {
-    id: id(o.id, 'log.id'),
-    carId: id(o.carId, 'log.carId'),
-    zoneId: zone(o.zoneId, 'log.zoneId'),
-    kind,
-    title: str(o.title, LIMITS.name, 'log.title', true),
-    notes: str(o.notes, LIMITS.text, 'log.notes'),
-    date: d,
-    mileage: num(o.mileage, 0, LIMITS.maxKm),
-    cost: num(o.cost, 0, LIMITS.maxCost),
-    ref,
-    createdAt: ts(o.createdAt),
+    id: id(o.id, 'log.id'), carId: id(o.carId, 'log.carId'), zoneId: zone(o.zoneId, 'log.zoneId'), kind,
+    title: str(o.title, LIMITS.name, 'log.title', true), notes: str(o.notes, LIMITS.text, 'log.notes'), date: d,
+    mileage: num(o.mileage, 0, LIMITS.maxKm), cost: num(o.cost, 0, LIMITS.maxCost), ref, createdAt: ts(o.createdAt),
+  };
+}
+
+export function sanitizeMileageEntry(v: unknown): MileageEntry {
+  const o = obj(v, 'mileage');
+  const d = date(o.date);
+  if (!d) throw new ValidationError('mileage.date: некорректная дата');
+  const km = num(o.mileage, 0, LIMITS.maxKm);
+  if (km === undefined) throw new ValidationError('mileage.mileage: некорректный пробег');
+  const source = o.source === 'service' || o.source === 'obd' ? o.source : 'manual';
+  return { id: id(o.id, 'mileage.id'), carId: id(o.carId, 'mileage.carId'), date: d, mileage: Math.round(km), source, notes: str(o.notes, LIMITS.text, 'mileage.notes'), createdAt: ts(o.createdAt) };
+}
+
+const INSPECTION_STATES = ['ok', 'watch', 'repair'] as const;
+export function sanitizeInspection(v: unknown): Inspection {
+  const o = obj(v, 'inspection');
+  const d = date(o.date);
+  if (!d) throw new ValidationError('inspection.date: некорректная дата');
+  const rawItems = o.items;
+  if (!Array.isArray(rawItems) || rawItems.length > 100) throw new ValidationError('inspection.items: некорректный список');
+  const items = rawItems.map((raw, index): InspectionItem => {
+    const x = obj(raw, `inspection.items[${index}]`);
+    if (!INSPECTION_STATES.includes(x.state as (typeof INSPECTION_STATES)[number])) throw new ValidationError('inspection.item.state: неизвестный статус');
+    return {
+      id: id(x.id, 'inspection.item.id'),
+      title: str(x.title, LIMITS.name, 'inspection.item.title', true),
+      zoneId: zone(x.zoneId, 'inspection.item.zoneId'),
+      state: x.state as InspectionItem['state'],
+      notes: str(x.notes, LIMITS.text, 'inspection.item.notes'),
+    };
+  });
+  if (new Set(items.map((x) => x.id)).size !== items.length) throw new ValidationError('inspection.items: повторяющиеся id');
+  return {
+    id: id(o.id, 'inspection.id'), carId: id(o.carId, 'inspection.carId'), date: d,
+    mileage: num(o.mileage, 0, LIMITS.maxKm), title: str(o.title, LIMITS.name, 'inspection.title') || 'Осмотр',
+    notes: str(o.notes, LIMITS.text, 'inspection.notes'), items, createdAt: ts(o.createdAt),
+  };
+}
+
+const DTC_RE = /^[PBCU][0-3][0-9A-F]{3}$/;
+export function sanitizeDiagnosticReport(v: unknown): DiagnosticReport {
+  const o = obj(v, 'diagnostic');
+  const d = date(o.date);
+  if (!d) throw new ValidationError('diagnostic.date: некорректная дата');
+  if (!Array.isArray(o.codes) || o.codes.length < 1 || o.codes.length > 100) throw new ValidationError('diagnostic.codes: некорректный список');
+  const codes = o.codes.map((raw): DiagnosticCode => {
+    const x = obj(raw, 'diagnostic.code');
+    const code = str(x.code, 8, 'diagnostic.code', true).toUpperCase();
+    if (!DTC_RE.test(code)) throw new ValidationError('diagnostic.code: некорректный DTC');
+    return { code, description: str(x.description, 500, 'diagnostic.description'), module: str(x.module, 100, 'diagnostic.module') || undefined, status: str(x.status, 60, 'diagnostic.status') || undefined };
+  });
+  return {
+    id: id(o.id, 'diagnostic.id'), carId: id(o.carId, 'diagnostic.carId'), date: d,
+    mileage: num(o.mileage, 0, LIMITS.maxKm), sourceName: str(o.sourceName, 200, 'diagnostic.sourceName') || 'OBD report',
+    notes: str(o.notes, LIMITS.text, 'diagnostic.notes'), codes, createdAt: ts(o.createdAt),
   };
 }
 
@@ -172,15 +218,17 @@ export function sniffMime(b: Uint8Array): AttachmentMime | undefined {
 
 function attachmentMeta(o: Obj) {
   const owner = o.ownerType as AttachmentOwner;
-  if (owner !== 'issue' && owner !== 'log' && owner !== 'task') throw new ValidationError('attachment.ownerType: неизвестный тип');
+  if (owner !== 'issue' && owner !== 'log' && owner !== 'task' && owner !== 'inspection') throw new ValidationError('attachment.ownerType: неизвестный тип');
   const mime = o.mime as AttachmentMime;
   if (!ATTACHMENT_MIMES.includes(mime)) throw new ValidationError('attachment.mime: допустимы только JPEG/PNG/WebP');
   const dim = (v: unknown) => num(v, 1, ATTACH_LIMITS.maxDim) ?? 0;
+  const phase: Attachment['phase'] = o.phase === 'before' || o.phase === 'after' || o.phase === 'general' ? o.phase as Attachment['phase'] : undefined;
   return {
     id: id(o.id, 'attachment.id'),
     carId: id(o.carId, 'attachment.carId'),
     ownerType: owner,
     ownerId: id(o.ownerId, 'attachment.ownerId'),
+    phase,
     name: str(o.name, LIMITS.name, 'attachment.name') || 'photo',
     mime,
     size: num(o.size, 1, ATTACH_LIMITS.fileBytes) ?? 0,
@@ -232,7 +280,13 @@ export function parseBackup(raw: unknown): Backup {
   const issues = list(o.issues, sanitizeIssue, 'issues').filter(keepCar);
   const tasks = list(o.tasks, sanitizeTask, 'tasks').filter(keepCar);
   const logs = list(o.logs, sanitizeLog, 'logs').filter(keepCar);
-  const owners = { issue: new Set(issues.map((x) => x.id)), task: new Set(tasks.map((x) => x.id)), log: new Set(logs.map((x) => x.id)) };
+  const mileages = list(o.mileages, sanitizeMileageEntry, 'mileages').filter(keepCar);
+  const inspections = list(o.inspections, sanitizeInspection, 'inspections').filter(keepCar);
+  const diagnostics = list(o.diagnostics, sanitizeDiagnosticReport, 'diagnostics').filter(keepCar);
+  const owners: Record<AttachmentOwner, Set<string>> = {
+    issue: new Set(issues.map((x) => x.id)), task: new Set(tasks.map((x) => x.id)), log: new Set(logs.map((x) => x.id)),
+    inspection: new Set(inspections.map((x) => x.id)),
+  };
   let attachments: BackupAttachment[] | undefined;
   if (o.attachments !== undefined) {
     if (Array.isArray(o.attachments) && o.attachments.length > ATTACH_LIMITS.maxCount) throw new ValidationError('attachments: слишком много файлов');
@@ -246,6 +300,9 @@ export function parseBackup(raw: unknown): Backup {
     issues,
     tasks,
     logs,
+    mileages,
+    inspections,
+    diagnostics,
     ...(attachments ? { attachments } : {}),
   };
 }

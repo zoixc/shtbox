@@ -25,6 +25,7 @@ export function fitProcedural(proc: ModelRig, pr: Profile, missing: ReadonlySet<
         const parent = o.parent;
         if (!parent) continue;
         const w = new Group();
+        w.name = `${z}:mirror`;
         w.scale.x = -1;
         parent.add(w);
         w.add(o);

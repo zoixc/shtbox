@@ -22,6 +22,13 @@ export function parseDate(s: DateStr): Date {
   return new Date(y, m - 1, d);
 }
 
+/** Прибавить целое число календарных дней, не меняя локальную дату из-за часового пояса. */
+export function addDays(s: DateStr, days: number): DateStr {
+  const d = parseDate(s);
+  d.setDate(d.getDate() + Math.trunc(days));
+  return toDateStr(d);
+}
+
 /** Прибавить месяцы с «прижатием» к концу месяца (31 янв + 1 мес = 28/29 фев). */
 export function addMonths(s: DateStr, months: number): DateStr {
   const d = parseDate(s);

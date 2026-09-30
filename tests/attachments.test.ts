@@ -30,6 +30,20 @@ describe.each(['mem', 'idb'] as const)('attachments (%s)', (kind) => {
     expect(await s.getAttachmentBlob(a.id)).toBeUndefined();
   });
 
+  it('keeps before/after photo stages on an inspection and deletes its attachments with it', async () => {
+    const s = await fresh(kind);
+    const inspection = await s.addInspection({ date: '2026-01-01', items: [{ id: 'i1', title: 'Кузов', zoneId: 'hood', state: 'watch', notes: '' }] });
+    const before = await s.addAttachment('inspection', inspection.id, img('before.jpg'), 'before');
+    const after = await s.addAttachment('inspection', inspection.id, img('after.jpg'), 'after');
+    expect(s.attachmentsByOwner.value.get(`inspection:${inspection.id}`)?.map((x) => x.phase)).toEqual(['before', 'after']);
+    const backup = parseBackup(JSON.parse(JSON.stringify(await s.exportSnapshot(true))));
+    expect(backup.inspections?.[0].items[0].title).toBe('Кузов');
+    expect(backup.attachments?.map((x) => x.phase)).toEqual(['before', 'after']);
+    await s.deleteInspection(inspection.id);
+    expect(await s.getAttachmentBlob(before.id)).toBeUndefined();
+    expect(await s.getAttachmentBlob(after.id)).toBeUndefined();
+  });
+
   it('cascades: deleting a record deletes its photos; reopening removes log photos', async () => {
     const s = await fresh(kind);
     const i1 = await s.addIssue({ zoneId: 'hood', kind: 'dent', title: 'a' });

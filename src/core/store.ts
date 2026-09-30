@@ -6,9 +6,9 @@ import { uid } from './id';
 import { dueInfo, worstState } from './maintenance';
 import type { DueInfo, DueState } from './maintenance';
 import { b64ToBytes, blobToB64 } from './b64';
-import { ATTACH_LIMITS, ValidationError, sanitizeAttachment, sanitizeCar, sanitizeIssue, sanitizeLog, sanitizeTask } from './validation';
+import { ATTACH_LIMITS, ValidationError, sanitizeAttachment, sanitizeCar, sanitizeDiagnosticReport, sanitizeInspection, sanitizeIssue, sanitizeLog, sanitizeMileageEntry, sanitizeTask } from './validation';
 import { BODY_KINDS } from './types';
-import type { Attachment, AttachmentOwner, Backup, BackupAttachment, Car, DateStr, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask } from './types';
+import type { Attachment, AttachmentOwner, Backup, BackupAttachment, Car, DateStr, DiagnosticReport, Inspection, Issue, IssueKind, LogEntry, LogKind, MaintenanceTask, MileageEntry, MileageSource } from './types';
 
 export interface ZoneSummary {
   open: number;
@@ -17,11 +17,14 @@ export interface ZoneSummary {
 }
 
 export type NewCar = Pick<Car, 'name' | 'modelId'> & Partial<Pick<Car, 'color' | 'plate' | 'vin' | 'year' | 'mileage'>>;
-export type NewIssue = Pick<Issue, 'zoneId' | 'kind' | 'title'> & Partial<Pick<Issue, 'notes' | 'priority' | 'cost' | 'spot'>>;
+export type NewIssue = Pick<Issue, 'zoneId' | 'kind' | 'title'> & Partial<Pick<Issue, 'notes' | 'priority' | 'cost' | 'spot' | 'inspectionId'>>;
 export type NewTask = Pick<MaintenanceTask, 'zoneId' | 'title'> &
   Partial<Pick<MaintenanceTask, 'notes' | 'everyKm' | 'everyMonths' | 'lastDate' | 'lastKm'>>;
 export type NewLog = Pick<LogEntry, 'zoneId' | 'title' | 'date'> &
   Partial<Pick<LogEntry, 'kind' | 'notes' | 'mileage' | 'cost'>>;
+export type NewMileage = Pick<MileageEntry, 'date' | 'mileage'> & Partial<Pick<MileageEntry, 'source' | 'notes'>>;
+export type NewInspection = Pick<Inspection, 'date' | 'items'> & Partial<Pick<Inspection, 'mileage' | 'title' | 'notes'>>;
+export type NewDiagnostic = Pick<DiagnosticReport, 'date' | 'sourceName' | 'codes'> & Partial<Pick<DiagnosticReport, 'mileage' | 'notes'>>;
 export interface ProcessedImage {
   name: string;
   /** полный файл (JPEG/PNG/WebP) */
@@ -56,6 +59,9 @@ export class Store {
   readonly issues = signal<Issue[]>([]);
   readonly tasks = signal<MaintenanceTask[]>([]);
   readonly logs = signal<LogEntry[]>([]);
+  readonly mileages = signal<MileageEntry[]>([]);
+  readonly inspections = signal<Inspection[]>([]);
+  readonly diagnostics = signal<DiagnosticReport[]>([]);
   readonly attachments = signal<Attachment[]>([]);
   readonly activeCarId = signal<string | null>(null);
   readonly ready = signal(false);
@@ -77,9 +83,19 @@ export class Store {
   });
   readonly carLogs = computed(() => {
     const id = this.activeCar.value?.id;
-    return this.logs.value
-      .filter((l) => l.carId === id)
-      .sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+    return this.logs.value.filter((l) => l.carId === id).sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+  });
+  readonly carMileages = computed(() => {
+    const id = this.activeCar.value?.id;
+    return this.mileages.value.filter((m) => m.carId === id).sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+  });
+  readonly carInspections = computed(() => {
+    const id = this.activeCar.value?.id;
+    return this.inspections.value.filter((x) => x.carId === id).sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
+  });
+  readonly carDiagnostics = computed(() => {
+    const id = this.activeCar.value?.id;
+    return this.diagnostics.value.filter((x) => x.carId === id).sort((a, b) => (a.date === b.date ? b.createdAt - a.createdAt : a.date < b.date ? 1 : -1));
   });
   /** вложения активного авто по владельцу: ключ `${ownerType}:${ownerId}` */
   readonly attachmentsByOwner = computed(() => {
@@ -143,12 +159,10 @@ export class Store {
   }
 
   async init(): Promise<void> {
-    const [cars, issues, tasks, logs, attachments] = await Promise.all([
-      this.storage.getAll<unknown>('cars'),
-      this.storage.getAll<unknown>('issues'),
-      this.storage.getAll<unknown>('tasks'),
-      this.storage.getAll<unknown>('logs'),
-      this.storage.getAll<unknown>('attachments'),
+    const [cars, issues, tasks, logs, mileages, inspections, diagnostics, attachments] = await Promise.all([
+      this.storage.getAll<unknown>('cars'), this.storage.getAll<unknown>('issues'), this.storage.getAll<unknown>('tasks'),
+      this.storage.getAll<unknown>('logs'), this.storage.getAll<unknown>('mileages'), this.storage.getAll<unknown>('inspections'),
+      this.storage.getAll<unknown>('diagnostics'), this.storage.getAll<unknown>('attachments'),
     ]);
     // повторная санитаризация: данные в БД тоже не считаем безусловно доверенными
     const safe = <T,>(arr: unknown[], fn: (x: unknown) => T): T[] => {
@@ -166,6 +180,9 @@ export class Store {
     this.issues.value = safe(issues, sanitizeIssue);
     this.tasks.value = safe(tasks, sanitizeTask);
     this.logs.value = safe(logs, sanitizeLog);
+    this.mileages.value = safe(mileages, sanitizeMileageEntry);
+    this.inspections.value = safe(inspections, sanitizeInspection);
+    this.diagnostics.value = safe(diagnostics, sanitizeDiagnosticReport);
     this.attachments.value = safe(attachments, sanitizeAttachment);
     try {
       const saved = localStorage.getItem(ACTIVE_KEY);
@@ -206,7 +223,11 @@ export class Store {
   async addCar(input: NewCar): Promise<Car> {
     const now = Date.now();
     const car = sanitizeCar({ color: '#c9ccd1', plate: '', vin: '', mileage: 0, ...input, id: uid(), createdAt: now, updatedAt: now });
-    await this.commit([{ store: 'cars', put: car }], () => (this.cars.value = [...this.cars.value, car]));
+    const initialMileage = car.mileage > 0 ? sanitizeMileageEntry({ id: uid(), carId: car.id, date: todayStr(), mileage: car.mileage, source: 'manual', notes: 'Начальный пробег', createdAt: now }) : undefined;
+    await this.commit([{ store: 'cars', put: car }, ...(initialMileage ? [{ store: 'mileages', put: initialMileage } as Op] : [])], () => {
+      this.cars.value = [...this.cars.value, car];
+      if (initialMileage) this.mileages.value = [...this.mileages.value, initialMileage];
+    });
     this.setActiveCar(car.id);
     return car;
   }
@@ -215,7 +236,16 @@ export class Store {
     const cur = this.cars.value.find((c) => c.id === id);
     if (!cur) return;
     const next = sanitizeCar({ ...cur, ...patch, id, updatedAt: Date.now() });
-    await this.commit([{ store: 'cars', put: next }], () => (this.cars.value = this.cars.value.map((c) => (c.id === id ? next : c))));
+    if (patch.mileage !== undefined && next.mileage < cur.mileage) throw new ValidationError('Пробег не может быть меньше последнего показания. Для истории добавьте датированную запись.');
+    const entry = next.mileage > cur.mileage ? sanitizeMileageEntry({
+      id: uid(), carId: id, date: todayStr(), mileage: next.mileage, source: 'manual', notes: 'Показание одометра', createdAt: Date.now(),
+    }) : undefined;
+    const ops: Op[] = [{ store: 'cars', put: next }];
+    if (entry) ops.push({ store: 'mileages', put: entry });
+    await this.commit(ops, () => {
+      this.cars.value = this.cars.value.map((c) => (c.id === id ? next : c));
+      if (entry) this.mileages.value = [...this.mileages.value, entry];
+    });
   }
 
   async deleteCar(id: string): Promise<void> {
@@ -223,6 +253,9 @@ export class Store {
     for (const i of this.issues.value) if (i.carId === id) ops.push({ store: 'issues', del: i.id });
     for (const t of this.tasks.value) if (t.carId === id) ops.push({ store: 'tasks', del: t.id });
     for (const l of this.logs.value) if (l.carId === id) ops.push({ store: 'logs', del: l.id });
+    for (const m of this.mileages.value) if (m.carId === id) ops.push({ store: 'mileages', del: m.id });
+    for (const x of this.inspections.value) if (x.carId === id) ops.push({ store: 'inspections', del: x.id });
+    for (const x of this.diagnostics.value) if (x.carId === id) ops.push({ store: 'diagnostics', del: x.id });
     const gone = this.attachments.value.filter((a) => a.carId === id);
     ops.push(...this.attachmentDelOps(gone));
     await this.commit(ops, () => {
@@ -231,22 +264,113 @@ export class Store {
       this.issues.value = this.issues.value.filter((c) => c.carId !== id);
       this.tasks.value = this.tasks.value.filter((c) => c.carId !== id);
       this.logs.value = this.logs.value.filter((c) => c.carId !== id);
+      this.mileages.value = this.mileages.value.filter((c) => c.carId !== id);
+      this.inspections.value = this.inspections.value.filter((c) => c.carId !== id);
+      this.diagnostics.value = this.diagnostics.value.filter((c) => c.carId !== id);
     });
     if (this.activeCarId.value === id) this.activeCarId.value = null;
   }
 
-  /** Возвращает op для обновления пробега, если новое значение больше текущего. */
-  private mileageOp(carId: string, km: number | undefined): { op?: Op; car?: Car } {
+  /** Сохраняет датированный одометр из записи; порядок показаний проверяется до транзакции. */
+  private mileageOp(carId: string, km: number | undefined, date = todayStr(), notes = '', source: MileageSource = 'service'): { ops: Op[]; car?: Car; entry?: MileageEntry } {
+    if (km === undefined) return { ops: [] };
+    if (date > todayStr()) throw new ValidationError('Дата показания пробега не может быть в будущем.');
+    const ordered = this.mileages.value.filter((x) => x.carId === carId).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+    const before = [...ordered].reverse().find((x) => x.date <= date);
+    const after = ordered.find((x) => x.date > date);
+    if (before && km < before.mileage) throw new ValidationError(`Показание меньше предыдущего (${before.mileage.toLocaleString('ru-RU')} км от ${before.date}).`);
+    if (after && km > after.mileage) throw new ValidationError(`Показание больше следующего (${after.mileage.toLocaleString('ru-RU')} км от ${after.date}).`);
     const car = this.cars.value.find((c) => c.id === carId);
-    if (!car || km === undefined || km <= car.mileage) return {};
-    const next = { ...car, mileage: Math.round(km), updatedAt: Date.now() };
-    return { op: { store: 'cars', put: next }, car: next };
+    if (!after && car && km < car.mileage) throw new ValidationError('Для текущего или будущего показания нельзя указать пробег меньше одометра автомобиля.');
+    const entry = sanitizeMileageEntry({ id: uid(), carId, date, mileage: km, source, notes, createdAt: Date.now() });
+    const next = car && km > car.mileage ? { ...car, mileage: Math.round(km), updatedAt: Date.now() } : undefined;
+    return { ops: [{ store: 'mileages', put: entry }, ...(next ? [{ store: 'cars', put: next } as Op] : [])], car: next, entry };
+  }
+
+  async addMileage(input: NewMileage): Promise<MileageEntry> {
+    const car = this.activeCar.value;
+    if (!car) throw new Error('Нет активного автомобиля');
+    const entry = sanitizeMileageEntry({ ...input, id: uid(), carId: car.id, source: input.source ?? 'manual', createdAt: Date.now() });
+    if (entry.date > todayStr()) throw new ValidationError('Дата показания пробега не может быть в будущем.');
+    const ordered = this.mileages.value.filter((x) => x.carId === car.id).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+    const before = [...ordered].reverse().find((x) => x.date <= entry.date);
+    const after = ordered.find((x) => x.date > entry.date);
+    if (before && entry.mileage < before.mileage) throw new ValidationError(`Показание меньше предыдущего (${before.mileage.toLocaleString('ru-RU')} км от ${before.date}).`);
+    if (after && entry.mileage > after.mileage) throw new ValidationError(`Показание больше следующего (${after.mileage.toLocaleString('ru-RU')} км от ${after.date}).`);
+    if (!after && entry.mileage < car.mileage) throw new ValidationError('Для текущего или будущего показания нельзя указать пробег меньше одометра автомобиля.');
+    const nextCar = entry.mileage > car.mileage ? { ...car, mileage: entry.mileage, updatedAt: Date.now() } : undefined;
+    const ops: Op[] = [{ store: 'mileages', put: entry }];
+    if (nextCar) ops.push({ store: 'cars', put: nextCar });
+    await this.commit(ops, () => {
+      this.mileages.value = [...this.mileages.value, entry];
+      if (nextCar) this.cars.value = this.cars.value.map((x) => (x.id === car.id ? nextCar : x));
+    });
+    return entry;
+  }
+
+  async deleteMileage(id: string): Promise<void> {
+    const current = this.mileages.value.find((x) => x.id === id);
+    if (!current) return;
+    const remaining = this.mileages.value.filter((x) => x.carId === current.carId && x.id !== id).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+    const car = this.cars.value.find((x) => x.id === current.carId);
+    const latest = remaining[0];
+    const nextCar = car && current.mileage >= car.mileage ? { ...car, mileage: latest?.mileage ?? 0, updatedAt: Date.now() } : undefined;
+    const ops: Op[] = [{ store: 'mileages', del: id }];
+    if (nextCar) ops.push({ store: 'cars', put: nextCar });
+    await this.commit(ops, () => {
+      this.mileages.value = this.mileages.value.filter((x) => x.id !== id);
+      if (nextCar) this.cars.value = this.cars.value.map((x) => (x.id === nextCar.id ? nextCar : x));
+    });
+  }
+
+  async addInspection(input: NewInspection): Promise<Inspection> {
+    const car = this.activeCar.value;
+    if (!car) throw new Error('Нет активного автомобиля');
+    const inspection = sanitizeInspection({ title: 'Осмотр', notes: '', ...input, id: uid(), carId: car.id, createdAt: Date.now() });
+    const mileage = this.mileageOp(car.id, inspection.mileage, inspection.date, `Осмотр: ${inspection.title}`, 'manual');
+    await this.commit([{ store: 'inspections', put: inspection }, ...mileage.ops], () => {
+      this.inspections.value = [...this.inspections.value, inspection];
+      if (mileage.car) this.cars.value = this.cars.value.map((x) => (x.id === mileage.car!.id ? mileage.car! : x));
+      if (mileage.entry) this.mileages.value = [...this.mileages.value, mileage.entry];
+    });
+    return inspection;
+  }
+
+  async deleteInspection(id: string): Promise<void> {
+    const inspection = this.inspections.value.find((x) => x.id === id);
+    if (!inspection) return;
+    const gone = this.ownedAttachments('inspection', [id]);
+    const linked = this.issues.value.filter((x) => x.inspectionId === id).map((x) => sanitizeIssue({ ...x, inspectionId: undefined }));
+    await this.commit([{ store: 'inspections', del: id }, ...linked.map((x): Op => ({ store: 'issues', put: x })), ...this.attachmentDelOps(gone)], () => {
+      this.inspections.value = this.inspections.value.filter((x) => x.id !== id);
+      const byId = new Map(linked.map((x) => [x.id, x]));
+      this.issues.value = this.issues.value.map((x) => byId.get(x.id) ?? x);
+      this.dropAttachments(gone);
+    });
+  }
+
+  async addDiagnostic(input: NewDiagnostic): Promise<DiagnosticReport> {
+    const car = this.activeCar.value;
+    if (!car) throw new Error('Нет активного автомобиля');
+    const report = sanitizeDiagnosticReport({ ...input, id: uid(), carId: car.id, createdAt: Date.now() });
+    const mileage = this.mileageOp(car.id, report.mileage, report.date, `OBD: ${report.sourceName}`, 'obd');
+    await this.commit([{ store: 'diagnostics', put: report }, ...mileage.ops], () => {
+      this.diagnostics.value = [...this.diagnostics.value, report];
+      if (mileage.car) this.cars.value = this.cars.value.map((x) => (x.id === mileage.car!.id ? mileage.car! : x));
+      if (mileage.entry) this.mileages.value = [...this.mileages.value, mileage.entry];
+    });
+    return report;
+  }
+
+  async deleteDiagnostic(id: string): Promise<void> {
+    await this.commit([{ store: 'diagnostics', del: id }], () => (this.diagnostics.value = this.diagnostics.value.filter((x) => x.id !== id)));
   }
 
   // ---------- Дефекты / доделки ----------
   async addIssue(input: NewIssue): Promise<Issue> {
     const car = this.activeCar.value;
     if (!car) throw new Error('Нет активного автомобиля');
+    if (input.inspectionId && !this.inspections.value.some((x) => x.id === input.inspectionId && x.carId === car.id)) throw new ValidationError('Осмотр не найден');
     const issue = sanitizeIssue({
       notes: '',
       priority: 0,
@@ -286,16 +410,13 @@ export class Store {
       ref: { type: 'issue', id },
       createdAt: Date.now(),
     });
-    const { op, car } = this.mileageOp(cur.carId, c.mileage);
-    const ops: Op[] = [
-      { store: 'issues', put: issue },
-      { store: 'logs', put: log },
-    ];
-    if (op) ops.push(op);
+    const mileage = this.mileageOp(cur.carId, c.mileage, c.date, cur.title);
+    const ops: Op[] = [{ store: 'issues', put: issue }, { store: 'logs', put: log }, ...mileage.ops];
     await this.commit(ops, () => {
       this.issues.value = this.issues.value.map((i) => (i.id === id ? issue : i));
       this.logs.value = [...this.logs.value, log];
-      if (car) this.cars.value = this.cars.value.map((x) => (x.id === car.id ? car : x));
+      if (mileage.car) this.cars.value = this.cars.value.map((x) => (x.id === mileage.car!.id ? mileage.car! : x));
+      if (mileage.entry) this.mileages.value = [...this.mileages.value, mileage.entry];
     });
   }
 
@@ -376,16 +497,13 @@ export class Store {
       ref: { type: 'task', id },
       createdAt: Date.now(),
     });
-    const { op, car: nextCar } = this.mileageOp(cur.carId, km);
-    const ops: Op[] = [
-      { store: 'tasks', put: task },
-      { store: 'logs', put: log },
-    ];
-    if (op) ops.push(op);
+    const mileage = this.mileageOp(cur.carId, km, c.date, cur.title);
+    const ops: Op[] = [{ store: 'tasks', put: task }, { store: 'logs', put: log }, ...mileage.ops];
     await this.commit(ops, () => {
       this.tasks.value = this.tasks.value.map((t) => (t.id === id ? task : t));
       this.logs.value = [...this.logs.value, log];
-      if (nextCar) this.cars.value = this.cars.value.map((x) => (x.id === nextCar.id ? nextCar : x));
+      if (mileage.car) this.cars.value = this.cars.value.map((x) => (x.id === mileage.car!.id ? mileage.car! : x));
+      if (mileage.entry) this.mileages.value = [...this.mileages.value, mileage.entry];
     });
   }
 
@@ -394,12 +512,12 @@ export class Store {
     const car = this.activeCar.value;
     if (!car) throw new Error('Нет активного автомобиля');
     const log = sanitizeLog({ kind: 'repair', notes: '', ...input, id: uid(), carId: car.id, createdAt: Date.now() });
-    const { op, car: nextCar } = this.mileageOp(car.id, log.mileage);
-    const ops: Op[] = [{ store: 'logs', put: log }];
-    if (op) ops.push(op);
+    const mileage = this.mileageOp(car.id, log.mileage, log.date, log.title);
+    const ops: Op[] = [{ store: 'logs', put: log }, ...mileage.ops];
     await this.commit(ops, () => {
       this.logs.value = [...this.logs.value, log];
-      if (nextCar) this.cars.value = this.cars.value.map((x) => (x.id === nextCar.id ? nextCar : x));
+      if (mileage.car) this.cars.value = this.cars.value.map((x) => (x.id === mileage.car!.id ? mileage.car! : x));
+      if (mileage.entry) this.mileages.value = [...this.mileages.value, mileage.entry];
     });
   }
 
@@ -448,17 +566,19 @@ export class Store {
   }
 
   /** Добавляет уже подготовленное (сжатое, без EXIF) изображение к записи. */
-  async addAttachment(ownerType: AttachmentOwner, ownerId: string, img: ProcessedImage): Promise<Attachment> {
+  async addAttachment(ownerType: AttachmentOwner, ownerId: string, img: ProcessedImage, phase?: Attachment['phase']): Promise<Attachment> {
     const car = this.activeCar.value;
     if (!car) throw new Error('Нет активного автомобиля');
-    const exists =
-      ownerType === 'issue' ? this.issues.value.some((x) => x.id === ownerId) : ownerType === 'log' ? this.logs.value.some((x) => x.id === ownerId) : this.tasks.value.some((x) => x.id === ownerId);
+    const exists = ownerType === 'issue' ? this.issues.value.some((x) => x.id === ownerId)
+      : ownerType === 'log' ? this.logs.value.some((x) => x.id === ownerId)
+        : ownerType === 'task' ? this.tasks.value.some((x) => x.id === ownerId)
+          : this.inspections.value.some((x) => x.id === ownerId);
     if (!exists) throw new ValidationError('Запись не найдена');
     const cnt = this.attachments.value.filter((a) => a.ownerType === ownerType && a.ownerId === ownerId).length;
     if (cnt >= ATTACH_LIMITS.perOwner) throw new ValidationError(`К записи можно прикрепить не больше ${ATTACH_LIMITS.perOwner} фото`);
     if (img.blob.size > ATTACH_LIMITS.fileBytes) throw new ValidationError('Файл слишком большой');
     const att = sanitizeAttachment({
-      id: uid(), carId: car.id, ownerType, ownerId, name: img.name, mime: img.blob.type, size: img.blob.size, w: img.w, h: img.h, createdAt: Date.now(), thumb: img.thumb,
+      id: uid(), carId: car.id, ownerType, ownerId, phase, name: img.name, mime: img.blob.type, size: img.blob.size, w: img.w, h: img.h, createdAt: Date.now(), thumb: img.thumb,
     });
     await this.commit(
       [{ store: 'attachments', put: att }, { store: 'blobs', put: { id: att.id, carId: car.id, blob: img.blob } as { id: string } }],
@@ -488,6 +608,9 @@ export class Store {
       issues: this.issues.value,
       tasks: this.tasks.value,
       logs: this.logs.value,
+      mileages: this.mileages.value,
+      inspections: this.inspections.value,
+      diagnostics: this.diagnostics.value,
     };
   }
 
@@ -513,6 +636,9 @@ export class Store {
       ...b.issues.map((x): Op => ({ store: 'issues', put: x })),
       ...b.tasks.map((x): Op => ({ store: 'tasks', put: x })),
       ...b.logs.map((x): Op => ({ store: 'logs', put: x })),
+      ...(b.mileages ?? []).map((x): Op => ({ store: 'mileages', put: x })),
+      ...(b.inspections ?? []).map((x): Op => ({ store: 'inspections', put: x })),
+      ...(b.diagnostics ?? []).map((x): Op => ({ store: 'diagnostics', put: x })),
     ];
     const atts: Attachment[] = [];
     for (const x of b.attachments ?? []) {
@@ -532,6 +658,9 @@ export class Store {
       this.issues.value = upsert(this.issues.value, b.issues);
       this.tasks.value = upsert(this.tasks.value, b.tasks);
       this.logs.value = upsert(this.logs.value, b.logs);
+      this.mileages.value = upsert(this.mileages.value, b.mileages ?? []);
+      this.inspections.value = upsert(this.inspections.value, b.inspections ?? []);
+      this.diagnostics.value = upsert(this.diagnostics.value, b.diagnostics ?? []);
       this.attachments.value = upsert(this.attachments.value, atts);
     });
     if (!this.cars.value.some((c) => c.id === this.activeCarId.value) && this.cars.value[0]) this.setActiveCar(this.cars.value[0].id);
