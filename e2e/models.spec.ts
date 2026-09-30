@@ -58,7 +58,8 @@ test('своя модель: загрузить BMW GLB → мастер → с�
 
   // Краска: покрытие и цвет по коду из справочника.
   await wiz.getByRole('tab', { name: 'Краска' }).click();
-  await wiz.locator('.paint-finishes .chip').filter({ hasText: 'Металлик' }).click();
+  // точное совпадение: «Акрил (неметаллик)» тоже содержит подстроку «металлик»
+  await wiz.locator('.paint-finishes .chip').filter({ hasText: /^Металлик$/ }).click();
   await expect(wiz.locator('.paint-finishes .chip-on')).toHaveText(/Металлик/);
   await wiz.locator('.paint-search input[type=search]').fill('RAL 9005');
   await wiz.locator('.paint-row').filter({ hasText: 'Jet black' }).first().click();
@@ -74,7 +75,7 @@ test('своя модель: загрузить BMW GLB → мастер → с�
   await expect(dlg.getByLabel('Модель (3D)').locator('option:checked')).toHaveText('E2E BMW import');
   await dlg.getByLabel('Название').fill('Тестовый BMW');
   // Код краски: справочный и свой, коды марок хранятся только на устройстве.
-  await dlg.locator('.paint-finishes .chip').filter({ hasText: 'Металлик' }).click();
+  await dlg.locator('.paint-finishes .chip').filter({ hasText: /^Металлик$/ }).click();
   await dlg.locator('.paint-search input[type=search]').fill('RAL 9005');
   await dlg.locator('.paint-row').filter({ hasText: 'Jet black' }).first().click();
   await dlg.getByRole('button', { name: '+ Свой код краски (BMW 475, LC9Z…)' }).click();
